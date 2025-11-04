@@ -1,0 +1,254 @@
+import easyocr
+import torch
+import torch.nn.functional as F
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM, BertTokenizer
+import joblib
+import json
+import os
+import sys
+import pandas as pd
+from model.dual_classifier import DualClassifier
+
+# stdout 버퍼링 비활성화 (로그 즉시 출력)
+sys.stdout.reconfigure(line_buffering=True)
+
+# 현재 파일의 디렉토리 경로 가져오기
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_DIR = os.path.join(BASE_DIR)
+
+# 디바이스 설정
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# OCR 엔진 초기화
+reader = easyocr.Reader(['en', 'ko'])
+
+# 1단계 HuggingFace 모델 로드 (is_darkpattern 여부 판단)
+dp_tokenizer = AutoTokenizer.from_pretrained("h4shk4t/darkpatternLLM-multiclass")
+dp_model = AutoModelForSequenceClassification.from_pretrained("h4shk4t/darkpatternLLM-multiclass")
+dp_model.to(device)
+dp_model.eval()
+
+class_map = {
+    0: "scarcity",
+    1: "misdirection",
+    2: "Not_Dark_Pattern",
+    3: "obstruction",
+    4: "forced_action",
+    5: "sneaking",
+    6: "social_proof",
+    7: "urgency"
+}
+
+# 번역 모델 로드 (영->한)
+trans_model_name = "Helsinki-NLP/opus-mt-ko-en"
+trans_tokenizer = AutoTokenizer.from_pretrained(trans_model_name)
+trans_model = AutoModelForSeq2SeqLM.from_pretrained(trans_model_name).to(device)
+
+# 2단계 BERT 모델 로드 (category, predicate)
+bert_tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
+model_path = os.path.join(MODEL_DIR, "resgcn_improved.pt")
+category_encoder = joblib.load(os.path.join(MODEL_DIR, "label_encoders", "category_encoder.pkl"))
+predicate_encoder = joblib.load(os.path.join(MODEL_DIR, "label_encoders", "predicate_encoder.pkl"))
+
+model = DualClassifier(
+    num_category=len(category_encoder.classes_),
+    num_predicate=len(predicate_encoder.classes_)
+)
+model.load_state_dict(torch.load(model_path, map_location=device))
+model.to(device)
+model.eval()
+
+# 예측 함수 (두 단계 분기 + 번역 포함)
+def process_image_and_predict(image_path):
+    law_path = os.path.join(MODEL_DIR, "predicate_type_law.csv")
+    if os.path.exists(law_path):
+        laws_df = pd.read_csv(law_path)
+        reduced_law = laws_df[['type', 'laws']].drop_duplicates().reset_index(drop=True)
+    else:
+        reduced_law = pd.DataFrame(columns=['type', 'laws'])
+
+    ocr_results = reader.readtext(image_path)
+    output = []
+
+    for (bbox, text, prob) in ocr_results:
+        x_min = int(min(p[0] for p in bbox))
+        y_min = int(min(p[1] for p in bbox))
+        width = int(max(p[0] for p in bbox)) - x_min
+        height = int(max(p[1] for p in bbox)) - y_min
+
+        # 번역: 영어 → 한국어
+        input_text = text.strip()
+        try:
+            trans_inputs = trans_tokenizer.encode(input_text, return_tensors="pt", truncation=True).to(device)
+            translated = trans_model.generate(trans_inputs, max_length=100)
+            translated_text = trans_tokenizer.decode(translated[0], skip_special_tokens=True)
+        except Exception:
+            translated_text = input_text  # 번역 실패 시 원문 유지
+
+        # ✅ 예측 기준을 번역된 텍스트로 변경
+        # 1단계: 다크패턴 여부 판단
+        dp_inputs = dp_tokenizer(translated_text, return_tensors="pt", truncation=True, padding=True).to(device)
+        with torch.no_grad():
+            logits = dp_model(**dp_inputs).logits
+            probs = F.softmax(logits, dim=1)[0]
+            pred_class = torch.argmax(probs).item()
+            pred_label = class_map[pred_class]
+
+        is_dark = 0 if pred_label == "Not_Dark_Pattern" else 1
+        category, predicate, top_preds = None, None, []
+
+        # 2단계: 다크패턴일 경우 category/predicate 예측
+        if is_dark:
+            bert_inputs = bert_tokenizer(translated_text, return_tensors="pt", truncation=True, padding=True).to(device)
+            with torch.no_grad():
+                cat_logits, pred_logits = model(**bert_inputs)
+                cat_idx = torch.argmax(cat_logits, dim=1).item()
+                pred_idx = torch.argmax(pred_logits, dim=1).item()
+
+                category = category_encoder.inverse_transform([cat_idx])[0]
+                predicate = predicate_encoder.inverse_transform([pred_idx])[0]
+
+                pred_probs = F.softmax(pred_logits, dim=1).cpu().numpy()[0]
+                top_indices = pred_probs.argsort()[::-1][:3]
+                top_preds = [
+                    f"{predicate_encoder.inverse_transform([i])[0]} ({round(pred_probs[i], 4)})"
+                    for i in top_indices
+                ]
+
+        # 법률 정보 연결
+        law_list = []
+        if category:
+            law_row = reduced_law[reduced_law["type"] == category]
+            if not law_row.empty:
+                try:
+                    law_list = json.loads(law_row.iloc[0]["laws"])
+                except Exception as e:
+                    print(f"[WARNING] JSON parsing error in laws: {e}")
+
+        output.append({
+            "text": text,
+            "translated": translated_text,
+            "confidence": float(prob),
+            "bbox": json.dumps({"x": x_min, "y": y_min, "width": width, "height": height}),
+            "is_darkpattern": is_dark,
+            "predicate": predicate,
+            "top1_predicate": top_preds[0] if len(top_preds) > 0 else None,
+            "top2_predicate": top_preds[1] if len(top_preds) > 1 else None,
+            "top3_predicate": top_preds[2] if len(top_preds) > 2 else None,
+            "category": category,
+            "type": category,
+            "laws": law_list
+        })
+
+    return output
+
+# 텍스트 기반 예측 함수 (* 기준으로 분리)
+def process_text_and_predict(full_text, progress_callback=None):
+    """
+    fullText를 * 기준으로 분리하여 각 텍스트에 대해 모델 예측 수행
+    
+    Args:
+        full_text: *로 구분된 텍스트 문자열
+        
+    Returns:
+        각 텍스트별 예측 결과 리스트
+    """
+    law_path = os.path.join(MODEL_DIR, "predicate_type_law.csv")
+    if os.path.exists(law_path):
+        laws_df = pd.read_csv(law_path)
+        reduced_law = laws_df[['type', 'laws']].drop_duplicates().reset_index(drop=True)
+    else:
+        reduced_law = pd.DataFrame(columns=['type', 'laws'])
+    
+    # * 기준으로 텍스트 분리
+    text_list = [text.strip() for text in full_text.split("*") if text.strip()]
+    print(f"📊 [텍스트 분리] * 기준으로 {len(text_list)}개 텍스트 발견")
+    output = []
+    
+    for idx, text in enumerate(text_list, 1):
+        input_text = text.strip()
+        if not input_text:
+            continue
+        
+        # 진행 상황 콜백 호출 (있는 경우)
+        if progress_callback:
+            try:
+                progress_callback(idx, len(text_list))
+            except Exception as e:
+                print(f"⚠️ [진행 상황 콜백 오류] {str(e)}")
+        
+        # 진행 상황 로그 (모든 단계에서 출력)
+        print(f"  🔄 [{idx}/{len(text_list)}] 모델링 진행 중 ({input_text[:50]})")
+        sys.stdout.flush()  # 버퍼 강제 출력
+        
+        # 이미 영어로 번역된 텍스트이므로 번역은 건너뜀 (크롬 익스텐션에서 이미 번역됨)
+        translated_text = input_text
+        
+        # 1단계: 다크패턴 여부 판단
+        print(f"     📊 1단계: 다크패턴 여부 판단 중")
+        sys.stdout.flush()
+        dp_inputs = dp_tokenizer(translated_text, return_tensors="pt", truncation=True, padding=True).to(device)
+        with torch.no_grad():
+            logits = dp_model(**dp_inputs).logits
+            probs = F.softmax(logits, dim=1)[0]
+            pred_class = torch.argmax(probs).item()
+            pred_label = class_map[pred_class]
+        
+        is_dark = 0 if pred_label == "Not_Dark_Pattern" else 1
+        print(f"     {'🔴 다크패턴 감지!' if is_dark else '⚪ 일반 텍스트'} (예측: {pred_label})")
+        sys.stdout.flush()
+        
+        category, predicate, probability, top_preds = None, None, None, []
+        
+        # 2단계: 다크패턴일 경우 category/predicate 예측
+        if is_dark:
+            print(f"     📊 2단계: Category/Predicate 예측 중")
+            sys.stdout.flush()
+            bert_inputs = bert_tokenizer(translated_text, return_tensors="pt", truncation=True, padding=True).to(device)
+            with torch.no_grad():
+                cat_logits, pred_logits = model(**bert_inputs)
+                cat_idx = torch.argmax(cat_logits, dim=1).item()
+                pred_idx = torch.argmax(pred_logits, dim=1).item()
+                
+                category = category_encoder.inverse_transform([cat_idx])[0]
+                predicate = predicate_encoder.inverse_transform([pred_idx])[0]
+                
+                pred_probs = F.softmax(pred_logits, dim=1).cpu().numpy()[0]
+                # 예측된 predicate의 확률값 저장
+                probability = float(pred_probs[pred_idx])
+                
+                top_indices = pred_probs.argsort()[::-1][:3]
+                top_preds = [
+                    f"{predicate_encoder.inverse_transform([i])[0]} ({round(pred_probs[i], 4)})"
+                    for i in top_indices
+                ]
+            
+            # 다크패턴 감지 시 상세 로그 (항상 출력)
+            print(f"     ✅ 결과: Type={category}, Predicate={predicate}, 확률={round(probability*100, 1)}%")
+            sys.stdout.flush()
+        
+        # 법률 정보 연결
+        law_list = []
+        if category:
+            law_row = reduced_law[reduced_law["type"] == category]
+            if not law_row.empty:
+                try:
+                    law_list = json.loads(law_row.iloc[0]["laws"])
+                except Exception as e:
+                    print(f"[WARNING] JSON parsing error in laws: {e}")
+        
+        output.append({
+            "text": translated_text,  # 번역된 텍스트 (모델링에 사용된 텍스트)
+            "translated": translated_text,  # 호환성 유지
+            "is_darkpattern": is_dark,
+            "predicate": predicate,
+            "probability": probability,
+            "top1_predicate": top_preds[0] if len(top_preds) > 0 else None,
+            "top2_predicate": top_preds[1] if len(top_preds) > 1 else None,
+            "top3_predicate": top_preds[2] if len(top_preds) > 2 else None,
+            "category": category,
+            "type": category,
+            "laws": law_list
+        })
+    
+    return output

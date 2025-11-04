@@ -1,0 +1,34 @@
+{
+  "name": "404dnf-integrated",
+  "version": "1.0.0",
+  "description": "통합 다크패턴 탐지 프로젝트 - 웹 애플리케이션 및 크롬 익스텐션",
+  "private": true,
+  "workspaces": [
+    "404DNF_web/server",
+    "404DNF_web/client",
+    "404DNF_ChomeExtensions/server"
+  ],
+  "scripts": {
+    "install:all": "npm install && cd 404DNF_web/server && npm install && cd ../client && npm install && cd ../../404DNF_ChomeExtensions/server && npm install",
+    "web:server": "cd 404DNF_web/server && npm start",
+    "web:client": "cd 404DNF_web/client && npm run dev",
+    "extension:server": "cd 404DNF_ChomeExtensions/server && npm start",
+    "extension:dev": "cd 404DNF_ChomeExtensions/server && npm run dev",
+    "model:server": "cd 404DNF_web/model_server && docker-compose up"
+  },
+  "keywords": [
+    "dark-pattern",
+    "detection",
+    "web-app",
+    "chrome-extension",
+    "mongodb",
+    "ml"
+  ],
+  "author": "",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": ""
+  }
+}
+

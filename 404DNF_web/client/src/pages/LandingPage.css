@@ -1,0 +1,102 @@
+.loading-page {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  background-color: #f9fafb;
+  font-family: 'Noto Sans KR', sans-serif;
+}
+
+/* 박스 */
+.loading-box {
+  background-color: white;
+  padding: 3rem 2rem;
+  border-radius: 1.5rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+  text-align: center;
+
+  width: 90%;
+  max-width: 500px;
+  min-height: 320px;
+
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+}
+
+/* 두더지 아이콘 */
+.loading-icon {
+  width: 150px;
+  height: 150px;
+  margin-bottom: 1.8rem;
+}
+
+/* 제목 */
+.loading-box h2 {
+  font-size: 2.2rem;
+  font-weight: 800;
+  color: #1f2937;
+  margin-bottom: 1rem;
+}
+
+/* 설명 */
+.loading-box p {
+  color: #4b5563;
+  font-size: 1.4rem;
+  font-weight: 500;
+  line-height: 1.6;
+  margin-bottom: 2rem;
+}
+
+/* 점 애니메이션 */
+.dot-loader {
+  display: flex;
+  justify-content: center;
+  gap: 0.6rem;
+}
+
+.dot-loader span {
+  width: 12px;
+  height: 12px;
+  background-color: #9ca3af;
+  border-radius: 50%;
+  animation: blink 1.4s infinite ease-in-out both;
+}
+
+.dot-loader span:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.dot-loader span:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+@keyframes blink {
+  0%, 80%, 100% {
+    transform: scale(0);
+    opacity: 0.3;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* ✅ 결과 보기 버튼 */
+.result-button {
+  margin-top: 2rem;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: bold;
+  background-color: #1f2937;
+  color: white;
+  border: none;
+  border-radius: 0.75rem;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.result-button:hover {
+  background-color: #111827;
+}

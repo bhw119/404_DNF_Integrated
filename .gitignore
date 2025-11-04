@@ -1,0 +1,91 @@
+# Dependencies
+node_modules/
+**/node_modules/
+.pnp
+.pnp.js
+
+# Environment variables
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.nuxt/
+.vuepress/dist/
+.svelte-kit/
+
+# Cache
+.cache/
+.parcel-cache/
+.npm/
+.eslintcache
+.stylelintcache
+.rpt2_cache/
+.rts2_cache/
+.node_repl_history
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.pytype/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+desktop.ini
+
+# Model files (large files)
+*.pth
+*.pkl
+*.h5
+*.ckpt
+
+# Uploads and input images
+**/uploads/
+**/input_image/
+**/restored-key.json
+
+# Docker
+.dockerignore
+
+# Temporary files
+*.tmp
+*.temp
+*.zip
+*.tar.gz
+
+# 민감한 정보가 포함된 파일 (예제 파일만 커밋)
+# start_all.sh.example
+# 실행방법.md.example

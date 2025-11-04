@@ -1,0 +1,415 @@
+/* AnalyzeResultPage.css */
+:root {
+  --skeleton-base-color: #9d9d9d;
+  --skeleton-highlight-color: #a7a7a7;
+}
+
+/* AnalyzeResult.css */
+.dimming-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.4); /* 전체를 어둡게 */
+  pointer-events: none;
+  mask-image: none; /* 자바스크립트에서 동적으로 설정 */
+  -webkit-mask-image: none;
+}
+
+/* 이미지 컨테이너 */
+.uploaded-image-wrapper {
+  position: relative;
+}
+
+/* 이미지 자체 */
+.uploaded-image {
+  width: 100%;
+  display: block;
+}
+
+/* 전체 어둡게 처리 (dimming) */
+.uploaded-image-wrapper {
+  position: relative;
+}
+
+.uploaded-image {
+  width: 100%;
+  display: block;
+}
+
+.highlight-box {
+  position: absolute;
+  border: 2px solid red;           /* 🔴 테두리만 강조 */
+  background-color: transparent;   /* ✅ 내부는 투명 */
+  z-index: 2;
+  pointer-events: none;
+  box-shadow: 0 0 4px red;         /* 선택: 빨간 glow 효과 */
+}
+.law-url, .case-url{
+  font-size: 0.875rem;
+  font-weight: 400;
+  color: #a2a2a2
+}
+
+.react-loading-skeleton {
+  height: 18px !important;
+  margin-top: 0.5rem !important;
+  border-radius: 9px !important; /* 🔄 18px의 절반 */
+}
+
+.skeleton-wrapper .react-loading-skeleton {
+  border-radius: 999px !important;
+  background-color: var(--skeleton-base-color) !important;
+  background-image: linear-gradient(
+    100deg,
+    var(--skeleton-base-color),
+    var(--skeleton-highlight-color),
+    var(--skeleton-base-color)
+  ) !important;
+  background-size: 200% 100% !important;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite !important;
+}
+
+/* ✅ 두 번째 줄부터만 간격 적용 */
+.skeleton-wrapper .react-loading-skeleton + .react-loading-skeleton {
+  margin-top: 0.75rem !important;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+html, body, .analyzeAll-page {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  font-family: 'Pretendard', sans-serif;
+}
+
+.analysis-page {
+  display: grid;
+  grid-template-columns: 7fr 3fr;
+  height: 100vh;
+  gap: 1.5rem;
+  overflow: hidden;
+  background-color: #f1f3f6;
+  padding: 1rem;
+  box-sizing: border-box;
+}
+
+.left-column {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.image-header-wrapper {
+  position: sticky;
+  top: 0;
+  background: white;
+  z-index: 10;
+  padding:  0rem 0.5rem;
+  border-bottom: 1px solid #dfdfdf;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+}
+
+.image-header h3 {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: bold;
+}
+
+.image-header p {
+  margin: 0.5rem 0 0;
+  font-size: 0.95rem;
+  color: #666;
+}
+
+.upload-result {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 1.2rem;
+  background: #fff;
+  border-radius: 12px;
+  padding: 0rem 1.2rem;
+}
+
+
+.pagination-container {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.pagination-container button {
+  padding: 0.5rem 1rem;
+  background: #e7e7e7;
+  color: #333;
+  border: none;
+  border-radius: 999px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.pagination-container button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.page-indicator {
+  font-size: 1rem;
+  font-weight: 500;
+  color: #333;
+}
+
+.image-scroll-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 1rem;
+}
+
+.image-card {
+  background: white;
+  padding: 0rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.uploaded-image-wrapper {
+  position: relative;
+  width: 100%;
+  overflow: visible;
+  border: 1px solid #ddd;
+}
+
+.uploaded-image {
+  width: 100%;
+  display: block;
+}
+
+.highlight-box {
+  position: absolute;
+  border: 2px solid red;
+  background-color: rgba(255, 0, 0, 0.15);
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.bottom-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0rem;
+  background: white;
+  padding: 0.5rem 0.5rem;
+  box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.05);
+  border-top: 1px solid #eee;
+  height: auto;
+  flex-shrink: 0;
+  z-index: 10;
+  border-radius: 12px;
+  margin-top: 0.5rem;
+}
+
+.bottom-card-row {
+  display: flex;
+  gap: 0.3rem;
+  flex: 1;
+  height: 100%;
+}
+
+.text-card, .suggestion-card {
+  flex: 1;
+  background: white;
+  border-radius: 12px;
+  padding: 1rem 1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  height: 150px;
+  overflow: hidden;
+}
+
+.text-card h4, .suggestion-card h4, .pattern-card h4, .subtype-card h4{
+  margin-bottom: 0.5rem;
+  margin-top: 0.2rem;
+}
+
+
+
+.subtype-card{
+  background: white;
+  border-radius: 12px;
+  padding: 1.2rem 1.2rem 1rem 1.2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+
+  
+}
+
+.subtype-card strong{
+  font-size: 1.5rem;
+  color: #0F80F2;
+  word-break: break-word;
+  white-space: normal;
+}
+
+.text-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ocr-label {
+  background: linear-gradient(135deg, #5a62f4, #9f7aea);
+  color: white;
+  padding: 0.3rem 0.7rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.text-content, .suggestion-content {
+  margin-top: 0.5rem;
+  background: #f3f3f3;
+  padding: 1rem;
+  border-radius: 8px;
+  flex-grow: 1;
+  overflow-y: auto;
+  height: 100px;
+}
+
+.text-content p{
+  margin: 0;
+}
+
+.suggestion-content ul {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  flex-grow: 1;
+  overflow-y: auto;
+}
+
+.suggestion-content li {
+  background: #fff;
+  padding: 0.6rem 1rem;
+  border-radius: 6px;
+  border: 1px solid #ddd;
+  font-size: 0.95rem;
+}
+
+.right-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  height: auto;
+
+  overflow-y: scroll;      /* 스크롤은 활성화 */
+  scrollbar-width: none;   /* Firefox */
+  -ms-overflow-style: none;
+}
+
+.right-column::-webkit-scrollbar {
+  display: none;           /* Chrome, Safari */
+}
+
+/* 💡 수정된 부분: pattern-card와 subtype-card 가로 정렬 */
+.top-row {
+  display: flex;
+  flex-direction: column; /* ✅ 세로 정렬로 변경 */
+  gap: 1rem;
+}
+
+.pattern-card {
+  background: white;
+  border-radius: 12px;
+  padding: 1.2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.legal-card {
+  background: white;
+  border-radius: 12px;
+  padding: 0rem 1.2rem 1.2rem 1.2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.pattern-card, .subtype-card {
+  flex: 1;
+}
+
+.pattern-card-title {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.donut-wrapper {
+  width: 100%;
+  height: 200px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 1rem 0;
+}
+
+
+
+.tab-line-container {
+  margin-top: 1rem;
+}
+
+.tab-line {
+  display: flex;
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.tab-link {
+  padding: 0.8rem 1rem;
+  font-size: 1rem;
+  font-weight: 500;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #666;
+}
+
+.tab-link.active {
+  color: #000;
+  border-bottom: 3px solid #000;
+}
+
+.tab-content {
+  margin-top: 1rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.tab-content ul {
+  list-style: none;
+  padding-left: 0;
+  margin: 0;
+}
+
+.law-card, .case-card {
+  padding: 1rem 0;
+  border-bottom: 1px solid #eee;
+}
+
+.law-title, .case-title {
+  font-weight: 600;
+  color: #0070f3;
+  text-decoration: none;
+}

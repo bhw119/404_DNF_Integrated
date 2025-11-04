@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>DARKPATTERN DETECTION – 분석</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <style>
+    /* ===== 색/타이포 기본값 ===== */
+    :root {
+      color-scheme: light;
+      --bg:#ffffff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb;
+      --accent:#3b82f6; --danger:#ef4444;
+
+      --btn-bg:#f3f4f6; --btn-br:#d1d5db; --btn-fg:#111827; --btn-hov:#e5e7eb; --focus:#93c5fd;
+
+      --chip-bg:#111827;           /* “전체” 칩 검정 배경 */
+      --chip-on:#ffffff;
+      --chip-off:#6b7280;
+      --chip-br:#e5e7eb;
+
+      --badge-high:#fee2e2;
+      --badge-mid:#fde68a;
+      --badge-low:#d1fae5;
+
+      --blue-100:#dbeafe; --blue-300:#93c5fd;
+    }
+
+    * { box-sizing:border-box }
+    html,body {
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      color:var(--fg); background:var(--bg);
+    }
+
+    /* ===== Header ===== */
+    header { position:sticky; top:0; background:var(--bg); z-index:10; border-bottom:1px solid var(--line); }
+    .topbar { display:flex; align-items:center; gap:8px; padding:12px 14px; }
+    .title { font-weight:800; letter-spacing:.3px; font-size:16px; }
+    .actions { margin-left:auto; display:flex; gap:8px; }
+    .iconbtn {
+      width:30px; height:30px; display:grid; place-items:center; border-radius:8px;
+      border:1px solid var(--btn-br); background:var(--btn-bg); color:var(--btn-fg);
+      cursor:pointer; transition:background .15s ease, box-shadow .15s ease, transform .02s;
+      box-shadow:0 1px 0 rgba(0,0,0,.03);
+    }
+    .iconbtn:hover { background:var(--btn-hov); box-shadow:0 1px 4px rgba(0,0,0,.08); }
+    .iconbtn:active { transform:translateY(1px); }
+    .iconbtn:focus-visible { outline:2px solid var(--focus); outline-offset:2px; }
+    .iconbtn svg { width:16px; height:16px; stroke:currentColor; stroke-width:2; fill:none; stroke-linecap:round; stroke-linejoin:round; }
+
+    .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+
+    /* ===== Tabs ===== */
+    .tabs { display:flex; gap:12px; padding:0 14px 10px; border-bottom:1px solid var(--line); }
+    .tab {
+      background:transparent; border:0; cursor:pointer;
+      display:flex; align-items:center; gap:8px;
+      padding:10px 8px; border-bottom:2px solid transparent;
+      color:#6b7280; font-size:13px; text-decoration:none;
+    }
+    .tab:hover { color:var(--fg); }
+    .tab.active { color:var(--fg); font-weight:700; border-bottom-color: var(--accent); }
+    .tab svg { width:18px; height:18px; opacity:.9; stroke:var(--fg); fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; }
+
+    /* ===== 공통 레이아웃/카드 ===== */
+    .wrap { padding:14px; display:grid; gap:14px; }
+    .card {
+      border:1px solid var(--line); border-radius:14px; padding:14px; display:grid; gap:10px;
+      background:#ffffff; box-shadow:0 1px 4px rgba(0,0,0,.06);
+    }
+    .section-title { font-weight:800; font-size:15px; }
+    .muted { color:var(--muted); font-size:12px; }
+    .mono { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace; }
+    .divider { height:1px; background:var(--line); }
+
+    /* ===== 필터 칩 ===== */
+    .filters { display:flex; gap:8px; align-items:center; }
+    .chip {
+      border:1px solid var(--chip-br);
+      background:#f9fafb;
+      border-radius:999px;
+      padding:6px 12px;
+      font-size:12px;
+      color:#111827;
+      cursor:pointer;
+      user-select:none;
+    }
+    .chip[data-filter="all"] {
+      background:var(--chip-bg);
+      color:var(--chip-on);
+      border-color:#0d0f14;
+      font-weight:800;
+    }
+    .chip.active { outline:2px solid rgba(59,130,246,.25); outline-offset:2px; }
+
+    /* ===== 리스트 카드 ===== */
+    .list { display:grid; gap:12px; }
+    .item {
+      border:1.5px solid var(--blue-300);
+      border-radius:16px;
+      padding:14px;
+      background:#fff;
+      box-shadow:0 1px 2px rgba(59,130,246,.08);
+      display:grid; gap:10px;
+    }
+    .item .toprow { display:flex; align-items:center; gap:8px; }
+    .item .scoreline { color:var(--danger); font-weight:800; font-size:13px; }
+    .item .sentence { font-size:16px; font-weight:800; }
+    .pill-locate {
+      margin-left:auto; border:1px solid var(--line); background:#f2f6ff; color:#1f2937;
+      border-radius:999px; padding:6px 10px; font-size:12px; cursor:pointer;
+    }
+    .pill-locate:hover { background:var(--blue-100); }
+    .subhead { font-size:14px; font-weight:800; }
+    .kv { display:grid; gap:8px; }
+    .kv-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+    .kname { font-size:12px; color:var(--muted); width:84px; }
+    .kval { font-size:12px; }
+    .badge { font-size:11px; border-radius:999px; padding:4px 8px; border:1px solid var(--line); }
+    .badge.high { background:var(--badge-high); }
+    .badge.mid  { background:var(--badge-mid); }
+    .badge.low  { background:var(--badge-low); }
+    .chip-outline { display:inline-block; border:1px solid var(--line); background:#f9fafb; border-radius:999px; padding:4px 10px; font-size:12px; }
+
+    /* ===== 웹사이트 이동 카드 ===== */
+    .jump-card { border:1.5px solid var(--line); border-radius:14px; padding:10px; background:#fff; display:grid; gap:8px; }
+    .jump-head { color:var(--muted); font-size:12px; }
+    .jump-row { display:flex; align-items:center; gap:8px; border:1.5px solid var(--line); border-radius:10px; padding:10px 12px; }
+    .jump-title { font-size:20px; font-weight:900; flex:1; }
+    .jump-go { margin-left:auto; border:1px solid var(--line); background:#fff; border-radius:10px; width:36px; height:28px; display:grid; place-items:center; cursor:pointer; }
+    .jump-go:hover { background:#f9fafb; }
+
+    /* ===== FOOTER ===== */
+    .footer-card { background:#111827; color:#fff; border-radius:12px; padding:14px; display:grid; gap:8px; }
+    .footer-muted { color:#cbd5e1; }
+    .tool { width:28px;height:28px;border-radius:8px;background:#eef2ff;color:#111;display:grid;place-items:center;font-size:12px; }
+    .hidden { display:none !important; }
+
+    /* ===== 페이지와 동일한 링크-헤더 + 분리 푸터 스타일 ===== */
+    .link-block { padding:0; overflow:hidden; }
+    .link-head {
+      display:flex; align-items:center; justify-content:space-between;
+      gap:12px; padding:16px 14px;
+      text-decoration:none; color:inherit; background:#fff;
+      border-bottom:1px solid var(--line);
+    }
+    .link-head:hover { background:#f9fafb; }
+    .link-head:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+    .kicker { color:var(--muted); font-size:13px; margin-bottom:6px; }
+    .headline { font-weight:900; font-size:22px; letter-spacing:-0.2px; }
+    .chev { width:24px; height:24px; stroke:currentColor; fill:none; stroke-width:2; stroke-linecap:round; stroke-linejoin:round; opacity:.8; }
+    .project-card {
+      background:#0f172a; color:#e5e7eb;
+      padding:18px 16px; display:grid; gap:10px;
+      border-top:0; border-bottom-left-radius:14px; border-bottom-right-radius:14px;
+    }
+    .project-title { font-weight:800; font-size:20px; color:#fff; }
+    .row { display:flex; gap:12px; align-items:center; font-size:14px; color:#e5e7eb; }
+    .project-card .muted { color:#94a3b8; font-size:13px; min-width:64px; }
+    .tools { display:flex; gap:10px; margin-top:2px; flex-wrap:wrap; }
+    .pill {
+      display:inline-flex; align-items:center; justify-content:center;
+      height:34px; min-width:34px; padding:0 12px;
+      border-radius:999px; background:#111827; border:1px solid #1f2937; color:#e5e7eb;
+      font-weight:700; font-size:13px;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.04);
+    }
+  </style>
+</head>
+<body>
+  <!-- ===== Header ===== -->
+  <header>
+    <div class="topbar">
+      <div class="title">DARKPATTERN DETECTION</div>
+      <div class="actions">
+        <button id="actionRefresh" class="iconbtn" title="다시 불러오기" aria-label="다시 불러오기">
+          <svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7M21 3v6h-6"/></svg>
+        </button>
+        <button id="actionClose" class="iconbtn" title="닫기" aria-label="닫기">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6l-12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- 탭 -->
+    <div class="tabs">
+      <a class="tab" id="tabSummary" aria-selected="false">
+        <svg viewBox="0 0 24 24"><path d="M12 3l2 4 4 2-4 2-2 4-2-4-4-2 4-2z"/></svg>
+        <span>요약</span>
+      </a>
+      <a class="tab active" aria-selected="true">
+        <svg viewBox="0 0 24 24"><path d="M3 3v18M21 21H3M7 17V9m5 8V5m5 12v-6"/></svg>
+        <span>분석</span>
+      </a>
+      </a>
+    </div>
+
+    <div id="status" class="sr-only" aria-live="polite">불러오는 중…</div>
+  </header>
+
+  <!-- 모델 진행 상황 표시 (동적으로 생성됨) -->
+
+  <!-- ===== Main ===== -->
+  <main class="wrap">
+    <!-- 타이틀 & 필터 -->
+    <section class="card">
+      <div class="section-title" id="sectionTitle">분석 결과</div>
+      <div style="font-weight:900; font-size:20px;" id="sectionSubtitle">다크패턴이 탐지된 문장입니다</div>
+
+      <div class="filters" style="margin-top:6px;">
+        <div class="chip active" data-filter="all" id="chipAll">전체 <span id="countAll" class="mono">0</span></div>
+        <div class="chip" data-filter="high" id="chipHigh">높음 <span id="countHigh" class="mono">0</span></div>
+        <div class="chip" data-filter="mid" id="chipMid">중간 <span id="countMid" class="mono">0</span></div>
+        <div class="chip" data-filter="low" id="chipLow">낮음 <span id="countLow" class="mono">0</span></div>
+      </div>
+    </section>
+
+    <!-- 리스트 영역 -->
+    <section class="card">
+      <div id="list" class="list"></div>
+      <div id="empty" class="muted hidden" style="text-align:center; padding: 20px;">
+        <div id="emptyMessage">표시할 항목이 없습니다.</div>
+        <div id="progressInfo" style="display: none; margin-top: 12px; font-size: 14px; font-weight: 600;"></div>
+      </div>
+    </section>
+
+    <!-- 웹사이트 이동 (고정 URL) -->
+    <section class="card link-block">
+      <!-- 상단: 전체 클릭 타겟 (id 유지) -->
+      <a id="jumpGo" class="link-head" href="https://www.kw.ac.kr" target="_blank" rel="noopener noreferrer">
+        <div>
+          <div class="kicker">웹사이트 이동</div>
+          <div class="headline">다크패턴이 궁금하다면?</div>
+        </div>
+        <svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>
+      </a>
+
+      <!-- 하단: 정보 푸터 -->
+      <div class="project-card">
+        <div class="project-title">404 DNF</div>
+        <div class="row">
+          <span class="muted">project</span>
+          <span>Neuro Symbolic AI를 활용한 다크패턴 탐지 서비스</span>
+        </div>
+        <div class="row">
+          <span class="muted">period</span>
+          <span>2025.03 - 2025.11</span>
+        </div>
+        <div class="row">
+          <span class="muted">tools</span>
+        </div>
+        <div class="tools">
+          <span class="pill">DB</span>
+          <span class="pill">React</span>
+          <span class="pill">Node</span>
+          <span class="pill">AWS</span>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 메인 스크립트 -->
+  <script src="sidepanel_analysis.js"></script>
+</body>
+</html>
