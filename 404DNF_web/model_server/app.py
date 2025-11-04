@@ -164,18 +164,27 @@ def watch_extension_collection():
                             continue
                         
                         # fullText(번역된 텍스트)와 originalText(원본 텍스트) 가져오기
-                        full_text = doc.get("fullText")  # 번역된 텍스트 (모델링용)
-                        original_text = doc.get("originalText")  # 원본 텍스트 (표시용)
+                        full_text = doc.get("fullText")  # 번역된 영어 텍스트 (모델링용) - * 기준으로 구분됨
+                        original_text = doc.get("originalText")  # 원본 한글 텍스트 (표시용) - * 기준으로 구분됨
                         
                         if not full_text:
                             print(f"⚠️ [문서 {doc_id}] fullText가 없습니다. 건너뜁니다.")
                             processed_ids.add(doc_id)
                             continue
                         
-                        # originalText가 없으면 fullText를 원본으로 사용
+                        # originalText가 없으면 fullText를 원본으로 사용 (경고)
                         if not original_text:
                             original_text = full_text
                             print(f"⚠️ [문서 {doc_id}] originalText가 없습니다. fullText를 원본으로 사용합니다.")
+                        
+                        # fullText에 한글이 포함되어 있는지 확인 (모델에 한글이 들어가면 안 됨)
+                        import re
+                        has_korean_in_fulltext = bool(re.search(r'[가-힣]', full_text))
+                        if has_korean_in_fulltext:
+                            print(f"⚠️ [경고] fullText에 한글이 포함되어 있습니다!")
+                            print(f"   fullText는 반드시 번역된 영어 텍스트여야 합니다.")
+                            print(f"   fullText 샘플: {full_text[:200]}")
+                            sys.stdout.flush()
                         
                         # 새 문서 감지 로그
                         print("\n" + "=" * 80)

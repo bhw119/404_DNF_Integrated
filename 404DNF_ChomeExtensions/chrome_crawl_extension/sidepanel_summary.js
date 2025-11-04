@@ -37,6 +37,10 @@ const el = {
   midCount: document.getElementById("midCount"),
   lowCount: document.getElementById("lowCount"),
   noneCount: document.getElementById("noneCount"),
+  highOutOf: document.getElementById("highOutOf"),
+  midOutOf: document.getElementById("midOutOf"),
+  lowOutOf: document.getElementById("lowOutOf"),
+  noneOutOf: document.getElementById("noneOutOf"),
 
   // TOP3 유형
   top1Name: document.getElementById("top1Name"),
@@ -109,12 +113,13 @@ async function fetchRiskPercentFromModel(_docId) {
     if (r.ok) {
       const j = await r.json();
       if (j && j.ok === true && typeof j.percent === "number") {
+        // 서버에서 계산된 퍼센트는 이미 (dark/total * 100)이므로 그대로 사용
         return Math.max(0, Math.min(100, Math.round(j.percent)));
       }
     }
   } catch (_) { /* ignore */ }
 
-  // 2) 폴백: 상세 배열에서 계산
+  // 2) 폴백: 상세 배열에서 계산 (다크패턴수/전체 * 100)
   const url2 = `${API_BASE}/model?id=${encodeURIComponent(docId)}&t=${Date.now()}`;
   const res = await fetch(url2, { cache: "no-store" });
   if (!res.ok) throw new Error(`model API ${res.status}`);
@@ -143,9 +148,11 @@ async function fetchBucketsFromModel(_docId) {
   const data = await res.json();
 
   let high = 0, mid = 0, low = 0, none = 0;
+  let total = 0;  // 전체 개수 계산
 
   if (Array.isArray(data)) {
     const rows = data.filter(row => normalizeHexObjectId(row?.id) === docId);
+    total = rows.length;
 
     for (const row of rows) {
       const isDark = toBoolDark(row?.is_darkpattern);
@@ -160,7 +167,7 @@ async function fetchBucketsFromModel(_docId) {
       }
     }
   }
-  return { high, mid, low, none };
+  return { high, mid, low, none, total };
 }
 
 /* ──[4] TOP3 유형 집계 ─────────────────────────────────────────────────── */
@@ -261,10 +268,36 @@ async function fetchDoc({ bustCache = false } = {}) {
     if (el.framesList) el.framesList.textContent = (d.frames || []).join("\n");
     if (el.textPreview) el.textPreview.textContent = (d.fullText || "").slice(0, 1000) || "(본문 없음)";
 
-    // 위험지수 계산
+    // 분석 버킷 집계 (먼저 실행하여 total을 얻음)
+    let buckets = { high: 0, mid: 0, low: 0, none: 0, total: 0 };
+    try {
+      buckets = await fetchBucketsFromModel(d._id);
+      if (el.highCount) el.highCount.textContent = String(buckets.high);
+      if (el.midCount) el.midCount.textContent = String(buckets.mid);
+      if (el.lowCount) el.lowCount.textContent = String(buckets.low);
+      if (el.noneCount) el.noneCount.textContent = String(buckets.none);
+      
+      // 전체 개수 동적 업데이트
+      const total = buckets.total || 0;
+      if (el.highOutOf) el.highOutOf.textContent = `/${total}`;
+      if (el.midOutOf) el.midOutOf.textContent = `/${total}`;
+      if (el.lowOutOf) el.lowOutOf.textContent = `/${total}`;
+      if (el.noneOutOf) el.noneOutOf.textContent = `/${total}`;
+    } catch (err) { console.warn("버킷 집계 실패:", err); }
+
+    // 위험지수 계산 (다크패턴수/전체 * 100)
     let percent = 0;
-    try { percent = await fetchRiskPercentFromModel(d._id); }
-    catch (err) {
+    try {
+      // 버킷에서 다크패턴 개수와 전체 개수를 사용하여 계산
+      const darkCount = buckets.high + buckets.mid + buckets.low;
+      const total = buckets.total || 0;
+      if (total > 0) {
+        percent = Math.round((darkCount / total) * 100);
+      } else {
+        // 폴백: 서버 API 사용
+        percent = await fetchRiskPercentFromModel(d._id);
+      }
+    } catch (err) {
       console.warn("model 퍼센트 계산 실패 → d.overallRiskPercent 폴백 시도:", err);
       if (typeof d.overallRiskPercent === "number") percent = d.overallRiskPercent;
     }
@@ -276,15 +309,6 @@ async function fetchDoc({ bustCache = false } = {}) {
     if (el.overallRiskText) el.overallRiskText.textContent = `${percent}%`;
     if (el.overallRiskValue) el.overallRiskValue.textContent = `${percent}%`;
     if (el.ringCenterLabel) el.ringCenterLabel.textContent = label;
-
-    // 분석 버킷 집계
-    try {
-      const buckets = await fetchBucketsFromModel(d._id);
-      if (el.highCount) el.highCount.textContent = String(buckets.high);
-      if (el.midCount) el.midCount.textContent = String(buckets.mid);
-      if (el.lowCount) el.lowCount.textContent = String(buckets.low);
-      if (el.noneCount) el.noneCount.textContent = String(buckets.none);
-    } catch (err) { console.warn("버킷 집계 실패:", err); }
 
     // TOP3 유형 집계/바인딩
     try {

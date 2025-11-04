@@ -1,8 +1,14 @@
-require('dotenv').config();
+// 환경변수 로드 (루트와 서버 디렉토리 모두 확인)
+const path = require('path');
+const dotenv = require('dotenv');
+// 루트 디렉토리의 .env 파일 로드
+dotenv.config({ path: path.join(__dirname, '../../.env') });
+// 서버 디렉토리의 .env 파일 로드 (덮어쓰기)
+dotenv.config({ path: path.join(__dirname, '.env') });
+
 const bcrypt = require('bcrypt');
 const { MongoClient } = require('mongodb');
 const mongoose = require('mongoose');
-const path = require('path');
 const express = require('express');
 const cors = require('cors');
 
@@ -37,7 +43,11 @@ const suggestRoute = require('./routes/suggest');
 const predictDetailRoute = require('./routes/predict_detail');
 app.use('/predict_detail', predictDetailRoute);
 // ✅ MongoDB 연결
-const client = new MongoClient(process.env.MONGODB_URL);
+const mongoUri = process.env.MONGODB_URI || process.env.MONGODB_URL || process.env.MONGO_URI;
+if (!mongoUri) {
+  throw new Error('MongoDB URI가 설정되지 않았습니다. MONGODB_URI 환경변수를 확인해주세요.');
+}
+const client = new MongoClient(mongoUri);
 let usersCollection;
 
 async function connectDB() {
@@ -53,7 +63,11 @@ async function connectDB() {
 connectDB();
 
 // ✅ Mongoose 연결 (for Law model)
-mongoose.connect(process.env.MONGODB_URL, {
+const mongooseUri = process.env.MONGODB_URI || process.env.MONGODB_URL || process.env.MONGO_URI;
+if (!mongooseUri) {
+  throw new Error('MongoDB URI가 설정되지 않았습니다. MONGODB_URI 환경변수를 확인해주세요.');
+}
+mongoose.connect(mongooseUri, {
   dbName: process.env.DB_NAME
 }).then(() => {
   console.log('Mongoose 연결 성공');

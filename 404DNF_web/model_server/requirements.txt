@@ -8,3 +8,5 @@ joblib
 scikit-learn
 pandas
 sentencepiece
+sentence-transformers
+torch-geometric

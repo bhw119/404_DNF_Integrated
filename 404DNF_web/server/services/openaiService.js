@@ -1,11 +1,33 @@
+// OpenAI 관련 코드 - 사용하지 않음 (주석 처리)
+/*
 const OpenAI = require("openai");
 require("dotenv").config();
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+// OpenAI 환경변수 확인
+const hasOpenAIConfig = process.env.OPENAI_API_KEY;
+
+let openai = null;
+
+if (hasOpenAIConfig) {
+  try {
+    openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+    console.log('✅ OpenAI 설정 완료');
+  } catch (error) {
+    console.warn('⚠️  OpenAI 설정 실패:', error.message);
+    console.warn('   OpenAI 기능을 사용할 수 없습니다.');
+  }
+} else {
+  console.warn('⚠️  OpenAI 환경변수가 설정되지 않았습니다.');
+  console.warn('   OPENAI_API_KEY 환경변수가 필요합니다.');
+  console.warn('   OpenAI 기능을 사용할 수 없습니다.');
+}
 
 async function getSuggestionsAvoidingAllPatterns(inputText, patternList) {
+  if (!openai || !hasOpenAIConfig) {
+    throw new Error('OpenAI가 설정되지 않았습니다. OPENAI_API_KEY 환경변수를 확인해주세요.');
+  }
   const allPatternsText = patternList
     .map((p, i) => `${i + 1}. ${p.title} - ${p.definition}`)
     .join("\n");
@@ -66,6 +88,12 @@ ${bannedWords.join(", ")}
     .trim()
     .split("\n")
     .filter((line) => /^\d+\.\s/.test(line));
+}
+*/
+
+// 더미 함수 (호환성 유지)
+async function getSuggestionsAvoidingAllPatterns(inputText, patternList) {
+  throw new Error('OpenAI 기능이 비활성화되었습니다.');
 }
 
 module.exports = { getSuggestionsAvoidingAllPatterns };
