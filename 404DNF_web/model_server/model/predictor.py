@@ -148,6 +148,41 @@ label_encoder = LabelEncoder()
 label_encoder.classes_ = np.array(label_encoder_classes)
 print(f"✅ Label Encoder 설정 완료: {len(label_encoder_classes)}개 클래스")
 
+# Predicate -> Type 매핑 (사용자 제공 매핑)
+PREDICATE_TO_TYPE_MAP = {
+    # Urgency
+    "Countdown Timers": "Urgency",
+    "Limited-time Messages": "Urgency",
+    # Misdirection
+    "Confirmshaming": "Misdirection",
+    "Trick Questions": "Misdirection",
+    "Pressured Selling": "Misdirection",
+    # Social Proof
+    "Activity Notifications": "Social Proof",
+    "Testimonials of Uncertain Origin": "Social Proof",
+    # Scarcity
+    "Low-stock Messages": "Scarcity",
+    "High-demand Messages": "Scarcity",
+    # Not Dark Pattern
+    "Not Dark Pattern": "Not Dark Pattern",
+}
+
+def get_type_from_predicate(predicate):
+    """
+    Predicate 값으로부터 Type을 반환
+    """
+    if not predicate:
+        return None
+    # 직접 매핑 확인
+    if predicate in PREDICATE_TO_TYPE_MAP:
+        return PREDICATE_TO_TYPE_MAP[predicate]
+    # 대소문자 무시 매칭
+    predicate_lower = predicate.lower()
+    for key, value in PREDICATE_TO_TYPE_MAP.items():
+        if key.lower() == predicate_lower:
+            return value
+    return None
+
 # kNN 그래프 구성 함수 (노트북 구조)
 def knn_indices(emb, k=10, metric="cosine"):
     """kNN 인덱스 계산"""
@@ -279,11 +314,16 @@ def process_image_and_predict(image_path):
                 for i in top_indices
             ]
             
-            # Category는 predicate_type_law.csv에서 predicate로부터 매핑
+            # Category는 predicate로부터 매핑 (우선: 직접 매핑, 없으면 CSV에서 찾기)
             if predicate:
-                category_row = reduced_law[reduced_law["predicate"] == predicate]
-                if not category_row.empty:
-                    category = category_row.iloc[0]["type"]
+                # 직접 매핑 사용 (사용자 제공 매핑)
+                category = get_type_from_predicate(predicate)
+                # CSV에서 찾기 (fallback)
+                if not category:
+                    category_row = reduced_law[reduced_law["predicate"] == predicate]
+                    if not category_row.empty:
+                        category = category_row.iloc[0]["type"]
+                # 둘 다 없으면 None 유지
         except Exception as e:
             print(f"[WARNING] ResGCN 예측 실패: {e}")
             import traceback
@@ -407,11 +447,16 @@ def process_text_and_predict(full_text, progress_callback=None):
                 for i in top_indices
             ]
             
-            # Category는 predicate_type_law.csv에서 predicate로부터 매핑
+            # Category는 predicate로부터 매핑 (우선: 직접 매핑, 없으면 CSV에서 찾기)
             if predicate:
-                category_row = reduced_law[reduced_law["predicate"] == predicate]
-                if not category_row.empty:
-                    category = category_row.iloc[0]["type"]
+                # 직접 매핑 사용 (사용자 제공 매핑)
+                category = get_type_from_predicate(predicate)
+                # CSV에서 찾기 (fallback)
+                if not category:
+                    category_row = reduced_law[reduced_law["predicate"] == predicate]
+                    if not category_row.empty:
+                        category = category_row.iloc[0]["type"]
+                # 둘 다 없으면 None 유지
             
             # 결과 로그
             if is_dark:
