@@ -1,72 +1,75 @@
 """
 ResGCN_Improved 모델 정의
 PyTorch Geometric 기반의 Graph Convolutional Network 모델
-실제 체크포인트 구조에 맞게 수정됨
+노트북(ResGCN_try.ipynb) 구조와 완전히 일치
 """
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GCNConv, BatchNorm
-from torch_geometric.nn.pool import global_mean_pool
-from torch_geometric.data import Data, Batch
+from torch_geometric.nn import GCNConv
+from torch_geometric.nn.norm import BatchNorm
 
 
-class ResBlock(nn.Module):
-    """Residual Block for GCN - 노트북 구조와 동일하게 수정"""
-    def __init__(self, in_ch, out_ch):
-        super(ResBlock, self).__init__()
-        self.conv = GCNConv(in_ch, out_ch, bias=True)  # -> conv.lin.weight / conv.bias
-        self.bn = BatchNorm(out_ch)  # -> bn.module.*
-        self.res_proj = None
-        if in_ch != out_ch:
-            self.res_proj = nn.Linear(in_ch, out_ch)  # -> res_proj.weight/bias
+class ResidualGCNBlock(nn.Module):
+    """Residual Block for GCN - 노트북 구조와 완전히 동일"""
+    def __init__(self, dim_in, dim_out, dropout=0.1):
+        super().__init__()
+        self.conv = GCNConv(dim_in, dim_out, improved=True)  # 노트북: improved=True
+        self.bn = BatchNorm(dim_out)
+        self.dropout = dropout
+        self.res_proj = nn.Linear(dim_in, dim_out) if dim_in != dim_out else None
         
-    def forward(self, x, edge_index):
-        out = self.conv(x, edge_index)
+    def forward(self, x, edge_index, edge_weight=None):
+        """
+        Args:
+            x: [N, dim_in] 노드 임베딩
+            edge_index: [2, E] 엣지 인덱스
+            edge_weight: [E] 엣지 가중치 (None 가능, 노트북에서는 사용 안 함)
+        """
+        identity = x
+        # 노트북: edge_weight=None이면 내부 기본 정규화
+        out = self.conv(x, edge_index, edge_weight=edge_weight)
         out = self.bn(out)
         out = F.relu(out, inplace=True)
-        res = x if self.res_proj is None else self.res_proj(x)
-        return out + res
+        out = F.dropout(out, p=self.dropout, training=self.training)
+        if self.res_proj is not None:
+            identity = self.res_proj(identity)
+        return out + identity
 
 
-class ResGCN_Improved(nn.Module):
-    """ResGCN Improved 모델 - 노트북 구조와 동일하게 수정"""
-    def __init__(self, in_dim, hidden, num_classes, num_blocks=2):
-        super(ResGCN_Improved, self).__init__()
-        ch_in = in_dim
-        # 노트북 구조: 각 블록의 입력 차원을 동적으로 처리
+class ResGCN(nn.Module):
+    """ResGCN 모델 - 노트북 구조와 완전히 동일"""
+    def __init__(self, in_dim, hidden, out_dim, layers=2, dropout=0.1):
+        super().__init__()
+        dims = [in_dim] + [hidden] * layers
         self.blocks = nn.ModuleList([
-            ResBlock(ch_in if i == 0 else hidden, hidden) 
-            for i in range(num_blocks)
+            ResidualGCNBlock(dims[i], dims[i+1], dropout=dropout) 
+            for i in range(layers)
         ])
-        self.head = nn.Linear(hidden, num_classes)  # -> head.weight/head.bias
+        self.head = nn.Linear(hidden, out_dim)
         
     def forward(self, data):
         """
         Args:
-            data: PyTorch Geometric Batch 객체
+            data: PyTorch Geometric Data 또는 Batch 객체
                 - x: [TotalNodes, in_dim] 임베딩 벡터
                 - edge_index: [2, num_edges] 엣지 인덱스
-                - batch: [TotalNodes] 배치 인덱스 (각 노드가 어느 그래프에 속하는지)
+                - edge_weight: [num_edges] 엣지 가중치 (optional, 노트북에서는 None)
         
         Returns:
-            logits: [BatchSize, num_classes] 예측 로짓
+            logits: [TotalNodes, out_dim] 예측 로짓 (노트북: 전체 노드에 대해 반환)
         """
         x, edge_index = data.x, data.edge_index
+        edge_weight = getattr(data, "edge_weight", None)  # 노트북: edge_weight=None
         
         # Residual GCN blocks
         for blk in self.blocks:
-            x = blk(x, edge_index)
+            x = blk(x, edge_index, edge_weight=edge_weight)
         
-        # 노트북 구조: batch가 있으면 평균 풀링, 없으면 전체 평균
-        logits = self.head(x)  # [total_nodes, C]
-        # 각 샘플=그래프 1개, 여기서는 1노드 그래프이므로 평균 풀링해도 동일
-        if hasattr(data, "batch"):
-            b = data.batch
-            num_g = int(b.max().item()) + 1
-            out = torch.zeros(num_g, logits.size(-1), device=logits.device)
-            out = out.index_add(0, b, logits)
-            cnt = torch.bincount(b, minlength=num_g).clamp_min(1).unsqueeze(1)
-            return out / cnt
-        return logits.mean(dim=0, keepdim=True)
+        # 노트북: head(x)만 반환 (평균 풀링 없음)
+        return self.head(x)
+
+
+# 호환성을 위한 별칭
+ResGCN_Improved = ResGCN
 

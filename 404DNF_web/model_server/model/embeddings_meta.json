@@ -1,0 +1,21 @@
+{
+  "embedder_name": "sentence-transformers/all-mpnet-base-v2",
+  "text_col": "String",
+  "label_col": "label10",
+  "score_col": "prom_score_consistency",
+  "classes": [
+    "Activity Notifications",
+    "Confirmshaming",
+    "Countdown Timers",
+    "High-demand Messages",
+    "Limited-time Messages",
+    "Low-stock Messages",
+    "Not Dark Pattern",
+    "Pressured Selling",
+    "Testimonials of Uncertain Origin",
+    "Trick Questions"
+  ],
+  "knn_k": 10,
+  "mutual_knn": true,
+  "metric": "cosine"
+}

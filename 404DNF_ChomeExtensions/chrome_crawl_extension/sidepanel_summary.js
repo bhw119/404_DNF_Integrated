@@ -171,11 +171,21 @@ async function fetchBucketsFromModel(_docId) {
 }
 
 /* ──[4] TOP3 유형 집계 ─────────────────────────────────────────────────── */
-const TYPE_DESC_MAP = {
+const PREDICATE_DESC_MAP = {
   "Urgency": "제한된 시간 내에 행동을 강요함으로써 사용자가 충분한 정보 없이 의사결정을 내리게 함",
   "Misdirection": "시각적 강조, 언어트릭 등으로 사용자의 관심을 다른 곳으로 돌려 의도와 다른 행동을 유도",
   "Social Proof": "타인의 행동이나 평가를 조작하여 다수가 선택했다는 착각을 유도함",
   "Scarcity": "상품이 곧 없어질 것 같은 인상을 주어 충동구매를 유도",
+  "Activity Notifications": "사용자의 활동을 알림으로써 관심을 유도",
+  "Confirmshaming": "사용자가 특정 선택을 하지 않으면 부정적으로 묘사함",
+  "Countdown Timers": "시간 제한을 두어 긴박감을 조성",
+  "High-demand Messages": "높은 수요를 강조하여 구매를 유도",
+  "Limited-time Messages": "제한된 시간을 강조하여 긴급 구매를 유도",
+  "Low-stock Messages": "재고 부족을 강조하여 즉시 구매를 유도",
+  "Not Dark Pattern": "일반적인 텍스트로 다크패턴이 아님",
+  "Pressured Selling": "압박적인 판매 기법을 사용",
+  "Testimonials of Uncertain Origin": "출처가 불명확한 추천이나 후기를 사용",
+  "Trick Questions": "사용자를 속이기 위한 교묘한 질문을 사용",
 };
 
 async function fetchTopTypesFromModel(_docId) {
@@ -185,14 +195,18 @@ async function fetchTopTypesFromModel(_docId) {
   if (!res.ok) throw new Error(`model API ${res.status}`);
   const data = await res.json();
 
-  const counter = new Map(); // type -> count
+  const counter = new Map(); // predicate -> count
 
   if (Array.isArray(data)) {
-    const rows = data.filter(row => normalizeHexObjectId(row?.id) === docId && toBoolDark(row?.is_darkpattern));
+    // 모든 행을 집계 (다크패턴 여부와 관계없이 predicate 기준으로)
+    const rows = data.filter(row => normalizeHexObjectId(row?.id) === docId);
     for (const row of rows) {
-      const type = String(row?.type ?? "Unknown").trim();
-      if (!counter.has(type)) counter.set(type, 0);
-      counter.set(type, counter.get(type) + 1);
+      // predicate 값을 사용 (type이 아니라 predicate)
+      const predicate = String(row?.predicate ?? row?.type ?? "Unknown").trim();
+      if (predicate && predicate !== "Unknown") {
+        if (!counter.has(predicate)) counter.set(predicate, 0);
+        counter.set(predicate, counter.get(predicate) + 1);
+      }
     }
   }
 
@@ -200,34 +214,47 @@ async function fetchTopTypesFromModel(_docId) {
   const sorted = Array.from(counter.entries())
     .sort((a,b) => b[1] - a[1])
     .slice(0, 3)
-    .map(([type, count]) => ({ type, count, desc: TYPE_DESC_MAP[type] ?? "-" }));
+    .map(([predicate, count]) => ({ 
+      type: predicate,  // 호환성을 위해 type 필드 유지
+      predicate: predicate,  // 명시적으로 predicate 필드 추가
+      count, 
+      desc: PREDICATE_DESC_MAP[predicate] ?? "설명 없음" 
+    }));
 
-  return sorted; // [{type, count, desc}, ...]
+  return sorted; // [{type, predicate, count, desc}, ...]
 }
 
 function bindTop3(sorted) {
   // 초기화/숨김 처리
   const fill = (i, item) => {
+    // predicate 값 사용 (item.type이 아니라 item.predicate 또는 item.type)
+    const predicate = item?.predicate || item?.type || "Not Dark Pattern";
+    const desc = item?.desc || "설명 없음";
+    const count = item?.count || 0;
+    
     if (i === 0) {
       if (item) {
-        el.top1Name.textContent = item.type;
-        el.top1Desc.textContent = item.desc;
-        el.top1Count.textContent = String(item.count);
+        el.top1Name.textContent = predicate;
+        el.top1Desc.textContent = desc;
+        el.top1Count.textContent = String(count);
       } else {
-        el.top1Name.textContent = "-"; el.top1Desc.textContent = "-"; el.top1Count.textContent = "0";
+        // 데이터가 없을 때 기본값 표시
+        el.top1Name.textContent = "Not Dark Pattern";
+        el.top1Desc.textContent = "일반적인 텍스트로 다크패턴이 아님";
+        el.top1Count.textContent = "0";
       }
     } else if (i === 1) {
       if (item) {
-        el.top2Name.textContent = item.type;
-        el.top2Desc.textContent = item.desc;
-        el.top2Count.textContent = String(item.count);
+        el.top2Name.textContent = predicate;
+        el.top2Desc.textContent = desc;
+        el.top2Count.textContent = String(count);
         el.rank2Card.style.display = "";
       } else if (el.rank2Card) el.rank2Card.style.display = "none";
     } else if (i === 2) {
       if (item) {
-        el.top3Name.textContent = item.type;
-        el.top3Desc.textContent = item.desc;
-        el.top3Count.textContent = String(item.count);
+        el.top3Name.textContent = predicate;
+        el.top3Desc.textContent = desc;
+        el.top3Count.textContent = String(count);
         el.rank3Card.style.display = "";
       } else if (el.rank3Card) el.rank3Card.style.display = "none";
     }

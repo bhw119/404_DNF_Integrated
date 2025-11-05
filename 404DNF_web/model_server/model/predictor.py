@@ -1,15 +1,17 @@
 import easyocr
 import torch
 import torch.nn.functional as F
-from transformers import AutoTokenizer, AutoModelForSequenceClassification, AutoModelForSeq2SeqLM
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
 from sentence_transformers import SentenceTransformer
-from torch_geometric.data import Data, Batch
-import joblib
+from torch_geometric.data import Data
+import numpy as np
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import LabelEncoder
 import json
 import os
 import sys
 import pandas as pd
-from model.resgcn import ResGCN_Improved
+from model.resgcn import ResGCN
 
 # stdout 버퍼링 비활성화 (로그 즉시 출력)
 sys.stdout.reconfigure(line_buffering=True)
@@ -21,80 +23,96 @@ MODEL_DIR = os.path.join(BASE_DIR)
 # 디바이스 설정
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# OCR 엔진 초기화
+# OCR 엔진 초기화 (이미지 분석용)
 reader = easyocr.Reader(['en', 'ko'])
 
-# 1단계 HuggingFace 모델 로드 (is_darkpattern 여부 판단)
-dp_tokenizer = AutoTokenizer.from_pretrained("h4shk4t/darkpatternLLM-multiclass")
-dp_model = AutoModelForSequenceClassification.from_pretrained("h4shk4t/darkpatternLLM-multiclass")
-dp_model.to(device)
-dp_model.eval()
-
-class_map = {
-    0: "scarcity",
-    1: "misdirection",
-    2: "Not_Dark_Pattern",
-    3: "obstruction",
-    4: "forced_action",
-    5: "sneaking",
-    6: "social_proof",
-    7: "urgency"
-}
-
-# 번역 모델 로드 (영->한)
+# 번역 모델 로드 (영->한, 이미지 분석용)
 trans_model_name = "Helsinki-NLP/opus-mt-ko-en"
 trans_tokenizer = AutoTokenizer.from_pretrained(trans_model_name)
 trans_model = AutoModelForSeq2SeqLM.from_pretrained(trans_model_name).to(device)
 
-# 2단계 ResGCN 모델 로드 (predicate 예측)
+# ResGCN 모델 로드 (노트북 구조 기반)
 # SentenceTransformer 로드 (임베딩 생성용)
 st_model = SentenceTransformer('sentence-transformers/all-mpnet-base-v2', device=device)
 print(f"✅ SentenceTransformer 로드 완료 (device: {device})")
 
-# ResGCN 모델 로드
+# 모델 파일 경로
 model_path = os.path.join(MODEL_DIR, "resgcn_improved.pt")
-predicate_encoder = joblib.load(os.path.join(MODEL_DIR, "label_encoders", "predicate_encoder.pkl"))
-category_encoder = joblib.load(os.path.join(MODEL_DIR, "label_encoders", "category_encoder.pkl"))
+embeddings_path = os.path.join(MODEL_DIR, "embeddings_improved.npy")
+meta_path = os.path.join(MODEL_DIR, "embeddings_meta.json")
 
+# embeddings_meta.json 로드
+if os.path.exists(meta_path):
+    with open(meta_path, 'r', encoding='utf-8') as f:
+        meta = json.load(f)
+    print(f"✅ 메타데이터 로드 완료: {meta_path}")
+    print(f"   - knn_k: {meta.get('knn_k', 10)}")
+    print(f"   - mutual_knn: {meta.get('mutual_knn', True)}")
+    print(f"   - metric: {meta.get('metric', 'cosine')}")
+    print(f"   - classes: {len(meta.get('classes', []))}개")
+else:
+    print(f"⚠️  메타데이터 파일이 없습니다: {meta_path}")
+    print("   기본값을 사용합니다.")
+    meta = {
+        'knn_k': 10,
+        'mutual_knn': True,
+        'metric': 'cosine',
+        'classes': []
+    }
+
+# Train embeddings 로드 (inductive inference용)
+if os.path.exists(embeddings_path):
+    X_train = np.load(embeddings_path)
+    print(f"✅ Train embeddings 로드 완료: {embeddings_path}")
+    print(f"   - Shape: {X_train.shape}")
+else:
+    print(f"⚠️  Train embeddings 파일이 없습니다: {embeddings_path}")
+    print("   단일 노드 그래프로 추론합니다 (권장하지 않음).")
+    X_train = None
+
+# ResGCN 모델 체크포인트 로드
 print(f"📦 ResGCN 모델 체크포인트 로드 중: {model_path}")
 ckpt = torch.load(model_path, map_location=device)
 
 # 체크포인트에서 모델 하이퍼파라미터 추출
 if 'hp' in ckpt:
     hp = ckpt['hp']
-    in_dim = hp.get('in_dim', 768)  # all-mpnet-base-v2의 차원
+    in_dim = 768  # all-mpnet-base-v2의 차원
     hidden = hp.get('hidden', 128)
     num_blocks = hp.get('layers', 2)
+    dropout = hp.get('dropout', 0.1)
 else:
-    # 기본값 사용 (ckpt에 hp가 없는 경우)
+    # 기본값 사용
     in_dim = 768
     hidden = 128
     num_blocks = 2
+    dropout = 0.1
     print("⚠️  체크포인트에 hp 정보가 없어 기본값을 사용합니다.")
 
 # state_dict 추출
 if 'state_dict' in ckpt:
     state_dict = ckpt['state_dict']
 else:
-    # 전체 모델이 저장된 경우
-    if isinstance(ckpt, dict) and 'model' in ckpt:
-        state_dict = ckpt['model']
-    else:
-        # state_dict가 직접 저장된 경우
-        state_dict = ckpt
+    state_dict = ckpt
 
-# 출력 클래스 수는 체크포인트에서 확인하거나 predicate_encoder에서 가져옴
+# 출력 클래스 수는 체크포인트에서 확인
 if 'head.weight' in state_dict:
     num_classes = state_dict['head.weight'].shape[0]
     print(f"📊 체크포인트에서 num_classes 확인: {num_classes}")
+elif 'label_encoder_classes' in ckpt:
+    num_classes = len(ckpt['label_encoder_classes'])
+    print(f"📊 체크포인트에서 label_encoder_classes로 num_classes 확인: {num_classes}")
+elif meta.get('classes'):
+    num_classes = len(meta['classes'])
+    print(f"📊 메타데이터에서 num_classes 확인: {num_classes}")
 else:
-    num_classes = len(predicate_encoder.classes_)
-    print(f"⚠️  체크포인트에 head.weight가 없어 predicate_encoder에서 가져옴: {num_classes}")
+    num_classes = 10  # 기본값
+    print(f"⚠️  num_classes를 확인할 수 없어 기본값 사용: {num_classes}")
 
-print(f"📊 모델 설정: in_dim={in_dim}, hidden={hidden}, num_classes={num_classes}, num_blocks={num_blocks}")
+print(f"📊 모델 설정: in_dim={in_dim}, hidden={hidden}, num_classes={num_classes}, num_blocks={num_blocks}, dropout={dropout}")
 
 # ResGCN 모델 인스턴스 생성
-model = ResGCN_Improved(in_dim=in_dim, hidden=hidden, num_classes=num_classes, num_blocks=num_blocks)
+model = ResGCN(in_dim=in_dim, hidden=hidden, out_dim=num_classes, layers=num_blocks, dropout=dropout)
 
 # state_dict 로드
 model.load_state_dict(state_dict)
@@ -103,6 +121,103 @@ print("✅ 모델 state_dict 로드 완료")
 model.to(device)
 model.eval()
 print(f"✅ ResGCN 모델 로드 완료 (device: {device})")
+
+# Label Encoder 설정 (체크포인트 또는 메타데이터에서)
+if 'label_encoder_classes' in ckpt:
+    label_encoder_classes = ckpt['label_encoder_classes']
+elif meta.get('classes'):
+    label_encoder_classes = meta['classes']
+else:
+    # 기본 클래스 목록 (노트북에서 사용한 10개 클래스)
+    label_encoder_classes = [
+        "Activity Notifications",
+        "Confirmshaming",
+        "Countdown Timers",
+        "High-demand Messages",
+        "Limited-time Messages",
+        "Low-stock Messages",
+        "Not Dark Pattern",
+        "Pressured Selling",
+        "Testimonials of Uncertain Origin",
+        "Trick Questions"
+    ]
+    print("⚠️  Label encoder 클래스를 확인할 수 없어 기본값 사용")
+
+# LabelEncoder 생성 (예측 결과 디코딩용)
+label_encoder = LabelEncoder()
+label_encoder.classes_ = np.array(label_encoder_classes)
+print(f"✅ Label Encoder 설정 완료: {len(label_encoder_classes)}개 클래스")
+
+# kNN 그래프 구성 함수 (노트북 구조)
+def knn_indices(emb, k=10, metric="cosine"):
+    """kNN 인덱스 계산"""
+    nn = NearestNeighbors(n_neighbors=k+1, metric=metric)
+    nn.fit(emb)
+    _, idx = nn.kneighbors(emb)
+    return idx[:, 1:]  # drop self
+
+def build_edge_index(neigh_idx: np.ndarray, mutual: bool):
+    """엣지 인덱스 구성 (노트북 구조)"""
+    N, k = neigh_idx.shape
+    rows = np.repeat(np.arange(N), k)
+    cols = neigh_idx.reshape(-1)
+    # mutual/non-mutual 대칭 처리
+    if not mutual:
+        ei = np.vstack([np.concatenate([rows, cols]),
+                        np.concatenate([cols, rows])])
+        return np.unique(ei, axis=1)
+    # mutual kNN
+    S = set(zip(rows.tolist(), cols.tolist()))
+    mutual_pairs = [(i, j) for (i, j) in S if (j, i) in S and i != j]
+    if len(mutual_pairs) == 0:
+        ei = np.vstack([np.concatenate([rows, cols]),
+                        np.concatenate([cols, rows])])
+        return np.unique(ei, axis=1)
+    r = np.array([p[0] for p in mutual_pairs])
+    c = np.array([p[1] for p in mutual_pairs])
+    ei = np.vstack([np.concatenate([r, c]),
+                    np.concatenate([c, r])])
+    return np.unique(ei, axis=1)
+
+def forward_on_concat(model, X_train: np.ndarray, X_query: np.ndarray):
+    """
+    Inductive inference: train + query 임베딩을 concat하여 kNN 그래프 구성 후 추론
+    노트북의 forward_on_concat 방식과 동일
+    """
+    if X_train is None or len(X_train) == 0:
+        # Train embeddings가 없으면 단일 노드 그래프로 추론 (비권장)
+        print("⚠️  Train embeddings가 없어 단일 노드 그래프로 추론합니다.")
+        X_cat = X_query
+        # 단일 노드 그래프 (엣지 없음)
+        edge_index = np.empty((2, 0), dtype=np.int64)
+    else:
+        # Train + Query concat
+        X_cat = np.vstack([X_train, X_query])
+        # kNN 그래프 구성
+        knn_k = meta.get('knn_k', 10)
+        metric = meta.get('metric', 'cosine')
+        mutual_knn = meta.get('mutual_knn', True)
+        
+        knn = knn_indices(X_cat, k=knn_k, metric=metric)
+        edge_index = build_edge_index(knn, mutual_knn)
+    
+    # PyG Data 객체 생성
+    data = Data(
+        x=torch.tensor(X_cat, dtype=torch.float32, device=device),
+        edge_index=torch.tensor(edge_index, dtype=torch.long, device=device),
+    )
+    
+    # 추론
+    model.eval()
+    with torch.no_grad():
+        logits = model(data)  # [total_nodes, num_classes]
+        probs = F.softmax(logits, dim=1).detach().cpu().numpy()
+    
+    # Query 부분만 반환
+    if X_train is not None and len(X_train) > 0:
+        return probs[len(X_train):]
+    else:
+        return probs
 
 # 예측 함수 (두 단계 분기 + 번역 포함)
 def process_image_and_predict(image_path):
@@ -132,63 +247,52 @@ def process_image_and_predict(image_path):
         except Exception:
             translated_text = input_text  # 번역 실패 시 원문 유지
 
-        # ✅ 예측 기준을 번역된 텍스트로 변경
-        # 1단계: 다크패턴 여부 판단
-        dp_inputs = dp_tokenizer(translated_text, return_tensors="pt", truncation=True, padding=True).to(device)
-        with torch.no_grad():
-            logits = dp_model(**dp_inputs).logits
-            probs = F.softmax(logits, dim=1)[0]
-            pred_class = torch.argmax(probs).item()
-            pred_label = class_map[pred_class]
-
-        is_dark = 0 if pred_label == "Not_Dark_Pattern" else 1
+        # ResGCN 모델로 직접 예측 (1-2단계 구분 없이)
         category, predicate, top_preds = None, None, []
+        is_dark = 0
+        probability = None
 
-        # 2단계: 다크패턴일 경우 predicate 예측 (ResGCN 사용)
-        if is_dark:
-            try:
-                # SentenceTransformer로 임베딩 생성
-                with torch.no_grad():
-                    embedding = st_model.encode([translated_text], convert_to_tensor=True, device=device)  # [1, 768]
-                
-                # 1-노드 PyG Data 객체 생성
-                x = embedding  # [1, 768]
-                edge_index = torch.empty((2, 0), dtype=torch.long, device=device)  # 빈 엣지
-                pyg_data = Data(x=x, edge_index=edge_index)
-                
-                # Batch로 변환
-                pyg_batch = Batch.from_data_list([pyg_data])
-                pyg_batch = pyg_batch.to(device)
-                
-                # ResGCN 모델 추론
-                with torch.no_grad():
-                    logits = model(pyg_batch)  # [1, num_classes]
-                
-                # 결과 후처리
-                pred_probs = F.softmax(logits, dim=-1).cpu().numpy()[0]
-                pred_idx = torch.argmax(logits, dim=1).item()
-                
-                # Predicate 디코딩
-                predicate = predicate_encoder.inverse_transform([pred_idx])[0]
-                
-                # Top 3 predictions
-                top_indices = pred_probs.argsort()[::-1][:3]
-                top_preds = [
-                    f"{predicate_encoder.inverse_transform([i])[0]} ({round(pred_probs[i], 4)})"
-                    for i in top_indices
-                ]
-                
-                # Category는 predicate_type_law.csv에서 predicate로부터 매핑
-                category = None
-                if predicate:
-                    category_row = reduced_law[reduced_law["predicate"] == predicate]
-                    if not category_row.empty:
-                        category = category_row.iloc[0]["type"]
-            except Exception as e:
-                print(f"[WARNING] ResGCN 예측 실패: {e}")
-                predicate = None
-                top_preds = []
-                category = None
+        try:
+            # SentenceTransformer로 임베딩 생성
+            with torch.no_grad():
+                embedding = st_model.encode([translated_text], convert_to_numpy=True, show_progress_bar=False)  # [1, 768]
+            
+            # Inductive inference: forward_on_concat 사용
+            query_probs = forward_on_concat(model, X_train, embedding)  # [1, num_classes]
+            
+            # 결과 후처리
+            pred_probs = query_probs[0]  # [num_classes]
+            pred_idx = np.argmax(pred_probs)
+            
+            # Predicate 디코딩
+            predicate = label_encoder.inverse_transform([pred_idx])[0]
+            probability = float(pred_probs[pred_idx])
+            
+            # 다크패턴 여부 판단: predicate가 "Not Dark Pattern"이 아니면 다크패턴
+            is_not_dark_keywords = ["not dark pattern", "not_dark_pattern", "not dark", "normal", "none"]
+            is_dark = 1 if not any(keyword in predicate.lower() for keyword in is_not_dark_keywords) else 0
+            
+            # Top 3 predictions
+            top_indices = pred_probs.argsort()[::-1][:3]
+            top_preds = [
+                f"{label_encoder.inverse_transform([i])[0]} ({round(pred_probs[i], 4)})"
+                for i in top_indices
+            ]
+            
+            # Category는 predicate_type_law.csv에서 predicate로부터 매핑
+            if predicate:
+                category_row = reduced_law[reduced_law["predicate"] == predicate]
+                if not category_row.empty:
+                    category = category_row.iloc[0]["type"]
+        except Exception as e:
+            print(f"[WARNING] ResGCN 예측 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            predicate = None
+            top_preds = []
+            category = None
+            probability = None
+            is_dark = 0
 
         # 법률 정보 연결
         law_list = []
@@ -272,45 +376,34 @@ def process_text_and_predict(full_text, progress_callback=None):
         category, predicate, probability, top_preds = None, None, None, []
         is_dark = 0
         
-        # ResGCN 모델로 직접 예측 (1-2단계 구분 없이)
+        # ResGCN 모델로 직접 예측 (노트북 구조: inductive inference)
         print(f"     📊 ResGCN 모델 예측 중 (입력: {len(translated_text)}자)")
         sys.stdout.flush()
         
         try:
             # SentenceTransformer로 임베딩 생성
             with torch.no_grad():
-                embedding = st_model.encode([translated_text], convert_to_tensor=True, device=device)  # [1, 768]
+                embedding = st_model.encode([translated_text], convert_to_numpy=True, show_progress_bar=False)  # [1, 768]
             
-            # 1-노드 PyG Data 객체 생성
-            x = embedding  # [1, 768]
-            edge_index = torch.empty((2, 0), dtype=torch.long, device=device)  # 빈 엣지 (1-노드 그래프)
-            pyg_data = Data(x=x, edge_index=edge_index)
-            
-            # Batch로 변환 (단일 그래프이므로 배치 크기 1)
-            pyg_batch = Batch.from_data_list([pyg_data])
-            pyg_batch = pyg_batch.to(device)
-            
-            # ResGCN 모델 추론
-            with torch.no_grad():
-                logits = model(pyg_batch)  # [1, num_classes]
+            # Inductive inference: forward_on_concat 사용 (노트북 방식)
+            query_probs = forward_on_concat(model, X_train, embedding)  # [1, num_classes]
             
             # 결과 후처리
-            pred_probs = F.softmax(logits, dim=-1).cpu().numpy()[0]  # [num_classes]
-            pred_idx = torch.argmax(logits, dim=1).item()
+            pred_probs = query_probs[0]  # [num_classes]
+            pred_idx = np.argmax(pred_probs)
             
             # Predicate 디코딩
-            predicate = predicate_encoder.inverse_transform([pred_idx])[0]
+            predicate = label_encoder.inverse_transform([pred_idx])[0]
             probability = float(pred_probs[pred_idx])
             
-            # 다크패턴 여부 판단: predicate가 "Not_Dark_Pattern"이 아니면 다크패턴
-            # 또는 확률이 일정 임계값 이상이면 다크패턴으로 판단
-            is_not_dark_keywords = ["not_dark", "not_dark_pattern", "normal", "none"]
+            # 다크패턴 여부 판단: predicate가 "Not Dark Pattern"이 아니면 다크패턴
+            is_not_dark_keywords = ["not dark pattern", "not_dark_pattern", "not dark", "normal", "none"]
             is_dark = 1 if not any(keyword in predicate.lower() for keyword in is_not_dark_keywords) else 0
             
             # Top 3 predictions
             top_indices = pred_probs.argsort()[::-1][:3]
             top_preds = [
-                f"{predicate_encoder.inverse_transform([i])[0]} ({round(pred_probs[i], 4)})"
+                f"{label_encoder.inverse_transform([i])[0]} ({round(pred_probs[i], 4)})"
                 for i in top_indices
             ]
             
