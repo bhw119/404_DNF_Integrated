@@ -54,6 +54,7 @@ const state = {
 
 /** @typedef {{
  *   text: string,
+ *   rawText?: string,              // 원본 문장 (하이라이트용)
  *   probability?: number,          // 0~1 (또는 0~100)
  *   score?: number,
  *   label?: string,                // 예: "Urgency"
@@ -80,6 +81,28 @@ function toPercentAndSeverity(item) {
   else if (p >= 31) sev = "mid";
   else if (p === 0) sev = "none";
   return { percent: p, severity: sev };
+}
+
+async function broadcastHighlights() {
+  try {
+    const payload = state.items
+      .map((it) => {
+        const { severity } = toPercentAndSeverity(it);
+        if (severity === "none") return null;
+        return {
+          text: String(it.rawText || it.text || ""),
+          severity,
+        };
+      })
+      .filter(Boolean);
+
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) {
+      await chrome.tabs.sendMessage(tab.id, { type: "bulk-highlight", items: payload });
+    }
+  } catch (e) {
+    console.warn("페이지 하이라이트 동기화 실패:", e);
+  }
 }
 
 function escapeHTML(s) {
@@ -167,6 +190,7 @@ async function fetchDocForAnalysis() {
       renderCounts();
       renderList();
       setStatus("모델 분석이 진행 중입니다. 잠시만 기다려주세요...");
+      await broadcastHighlights();
       return;
     }
 
@@ -199,12 +223,13 @@ async function fetchDocForAnalysis() {
           state.items = darkPatternItems.map((it) => {
             // 원본 텍스트만 사용 (string 필드에 원본이 저장됨)
             // string이 원본 텍스트, translatedString은 번역된 텍스트 (사용하지 않음)
-            const text = String(it.string ?? "");
-            // 텍스트가 너무 길면 잘라서 표시 (버그 방지)
-            const displayText = text.length > 500 ? text.substring(0, 500) + "..." : text;
+            const rawText = String(it.string ?? "");
+            // 텍스트가 너무 길면 UI에서만 잘라서 표시 (하이라이트용 원본은 유지)
+            const displayText = rawText.length > 500 ? `${rawText.substring(0, 500)}…` : rawText;
             
             return {
               text: displayText,
+              rawText,
               probability: typeof it.probability === "number" ? it.probability : undefined,
               label: it.type ?? "",
               subtype: it.predicate ?? "",
@@ -229,6 +254,7 @@ async function fetchDocForAnalysis() {
 
     renderCounts();
     renderList();
+    await broadcastHighlights();
     setStatus("불러오기 완료");
   } catch (e) {
     console.error(e);
@@ -237,6 +263,7 @@ async function fetchDocForAnalysis() {
     state.items = [];
     renderCounts();
     renderList();
+    await broadcastHighlights();
   }
 }
 
@@ -350,9 +377,16 @@ function renderList() {
     // 위치보기: 현재 탭에 하이라이트 지시(가능하면 range/frameIndex 사용)
     card.querySelector(".pill-locate")?.addEventListener("click", async () => {
       try {
+        const { severity } = toPercentAndSeverity(it);
         const msg = {
           type: "highlight-in-page",
-          payload: { text: it.text, range: it.range, frameIndex: it.frameIndex, docId }
+          payload: {
+            text: it.rawText || it.text,
+            severity,
+            range: it.range,
+            frameIndex: it.frameIndex,
+            docId,
+          }
         };
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (tab?.id) await chrome.tabs.sendMessage(tab.id, msg);
@@ -425,7 +459,7 @@ el.jumpGo?.addEventListener("click", jumpToKw);
 /** --------- 모델 진행 상황 표시 ---------- */
 let progressInterval = null;
 
-function showModelProgress(progress) {
+async function showModelProgress(progress) {
   const { status, progress: prog, error } = progress;
   const current = prog?.current || 0;
   const total = prog?.total || 0;
@@ -474,11 +508,16 @@ function showModelProgress(progress) {
     state.items = [];
     renderCounts();
     renderList();
+    await broadcastHighlights();
   } else if (status === 'completed') {
     // 상태 초기화
     state.modelProgress = null;
+    state.items = [];
+    renderCounts();
+    renderList();
+    await broadcastHighlights();
     // 모델링이 완료되었으므로 결과 로드
-    fetchDocForAnalysis();
+    await fetchDocForAnalysis();
     if (progressInterval) {
       clearInterval(progressInterval);
       progressInterval = null;
@@ -486,6 +525,7 @@ function showModelProgress(progress) {
   } else if (status === 'failed') {
     // 상태 초기화
     state.modelProgress = null;
+    await broadcastHighlights();
     if (progressInterval) {
       clearInterval(progressInterval);
       progressInterval = null;
@@ -496,6 +536,7 @@ function showModelProgress(progress) {
     state.modelProgress = null;
     renderCounts();
     renderList();
+    await broadcastHighlights();
   }
 }
 
@@ -508,7 +549,7 @@ async function checkModelProgress() {
     
     const data = await res.json();
     if (data.ok && data.progress) {
-      showModelProgress(data.progress);
+      await showModelProgress(data.progress);
       
       // 완료되면 polling 중지
       if (data.progress.status === 'completed' || data.progress.status === 'failed') {
@@ -530,6 +571,7 @@ if (docId) {
   state.items = [];
   renderCounts();
   renderList();
+  broadcastHighlights().catch(() => {});
   
   // 즉시 한 번 확인
   checkModelProgress();

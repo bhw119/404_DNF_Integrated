@@ -30,6 +30,7 @@ const el = {
   overallRiskText: document.getElementById("overallRiskText"),
   overallRiskValue: document.getElementById("overallRiskValue"),
   ringCenterLabel: document.querySelector(".ring-center b"),
+  riskLegend: document.getElementById("riskLegend"),
 
   // 분석(버킷)
   vizArea: document.getElementById("vizArea"),
@@ -79,6 +80,13 @@ const RISK_THEME_RGB = {
 function applyRiskTheme(label) {
   const rgb = RISK_THEME_RGB[label] || RISK_THEME_RGB["위험"];
   document.documentElement.style.setProperty("--risk-rgb", rgb);
+}
+
+function updateLegendActive(label) {
+  if (!el.riskLegend) return;
+  el.riskLegend.querySelectorAll("span").forEach((span) => {
+    span.classList.toggle("active", span.dataset.label === label);
+  });
 }
 
 // model.id 정규화: 24자리 hex만 추출
@@ -333,6 +341,7 @@ async function fetchDoc({ bustCache = false } = {}) {
     // UI 반영(요약 게이지)
     const label = riskLabel(percent);
     applyRiskTheme(label);
+    updateLegendActive(label);
     if (el.overallRiskText) el.overallRiskText.textContent = `${percent}%`;
     if (el.overallRiskValue) el.overallRiskValue.textContent = `${percent}%`;
     if (el.ringCenterLabel) el.ringCenterLabel.textContent = label;

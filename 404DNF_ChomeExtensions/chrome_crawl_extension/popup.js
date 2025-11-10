@@ -131,14 +131,80 @@ function frameExtractorClean() {
 
   const merged = texts.join(' ').replace(/\s+/g, ' ').trim();
   
-  // 텍스트를 의미 있는 단위로 구분: 문장 단위로 *로 분리
-  // 마침표/물음표/느낌표 뒤에 * 추가하여 박스 단위 구분
+  // 텍스트를 박스 단위로 구분: 의미있는 단위로 *로 분리
+  // - 마침표/물음표/느낌표 뒤에 분리
+  // - 쉼표 뒤에도 분리 (너무 긴 문장 방지)
+  // - 최소 2개 이상의 단어가 포함되도록 그룹화
   let pretty = merged
     .replace(/([\.!\?])\s+/g, '$1*')  // 문장 끝에 * 추가
-    .replace(/([가-힣a-zA-Z0-9])\s+([A-Z가-힣])/g, '$1*$2')  // 대문자/한글 시작 전에도 * (새 문장)
+    .replace(/([,，])\s+/g, '$1*')    // 쉼표 뒤에도 * 추가 (적절한 길이 유지)
     .replace(/\*+/g, '*')  // 연속된 *를 하나로
     .replace(/^\*+|\*+$/g, '')  // 시작과 끝의 * 제거
     .trim();
+  
+  // 박스 단위로 분리하여 적절한 길이로 병합 (한 단어만 있는 박스 방지)
+  const boxes = pretty.split(/\*+/).filter(b => b.trim());
+  const MIN_WORDS = 2;  // 최소 단어 개수 (2개 이상)
+  const MIN_BOX_LENGTH = 10;  // 최소 박스 길이 (10자 이상)
+  const MAX_BOX_LENGTH = 200; // 최대 박스 길이 (200자 이하, 너무 긴 문장 방지)
+  
+  const mergedBoxes = [];
+  let currentBox = '';
+  
+  // 단어 개수 계산 함수
+  const getWordCount = (text) => {
+    return text.trim().split(/\s+/).filter(w => w.length > 0).length;
+  };
+  
+  for (const box of boxes) {
+    const trimmed = box.trim();
+    if (!trimmed) continue;
+    
+    const wordCount = getWordCount(trimmed);
+    const currentWordCount = getWordCount(currentBox);
+    
+    // 현재 박스가 최소 단어 개수 미만이거나 최소 길이 미만이면 다음 박스와 병합
+    if (currentWordCount < MIN_WORDS || currentBox.length < MIN_BOX_LENGTH) {
+      currentBox = (currentBox + ' ' + trimmed).trim();
+    } else {
+      // 현재 박스가 조건을 만족하면 저장하고 새 박스 시작
+      mergedBoxes.push(currentBox);
+      currentBox = trimmed;
+    }
+    
+    // 박스가 최대 길이를 초과하면 강제로 분리
+    if (currentBox.length > MAX_BOX_LENGTH) {
+      // 공백 기준으로 적절히 분리
+      const words = currentBox.split(/\s+/).filter(w => w.length > 0);
+      let tempBox = '';
+      for (const word of words) {
+        const nextTemp = (tempBox + ' ' + word).trim();
+        if (nextTemp.length > MAX_BOX_LENGTH && tempBox.length >= MIN_BOX_LENGTH && getWordCount(tempBox) >= MIN_WORDS) {
+          mergedBoxes.push(tempBox.trim());
+          tempBox = word;
+        } else {
+          tempBox = nextTemp;
+        }
+      }
+      currentBox = tempBox;
+    }
+  }
+  
+  // 마지막 박스 처리
+  const finalWordCount = getWordCount(currentBox);
+  if (finalWordCount >= MIN_WORDS && currentBox.trim().length >= MIN_BOX_LENGTH) {
+    mergedBoxes.push(currentBox.trim());
+  } else if (currentBox.trim()) {
+    // 마지막 박스가 조건 미만이면 이전 박스와 병합
+    if (mergedBoxes.length > 0) {
+      mergedBoxes[mergedBoxes.length - 1] = (mergedBoxes[mergedBoxes.length - 1] + ' ' + currentBox).trim();
+    } else if (finalWordCount >= MIN_WORDS) {
+      // 이전 박스가 없지만 단어 개수는 충족하면 추가
+      mergedBoxes.push(currentBox.trim());
+    }
+  }
+  
+  pretty = mergedBoxes.join('*');
 
   // 링크/URL 목록은 반환하지 않음
   return { frameUrl: url, title, text: pretty };
@@ -385,21 +451,44 @@ function preprocessForDarkPattern(text) {
       return false;
     }
     
-    // 숫자 비율이 너무 높으면 제외 (예: "1234 5678 9012")
-    // 완화: 80% 이상인 경우만 제외 (이전: 60%)
+    // 숫자 비율이 80% 이상인 경우 제외 (요청사항)
     const digitRatio = (box.match(/\d/g) || []).length / box.length;
-    if (digitRatio > 0.8) return false;
+    if (digitRatio >= 0.8) return false;
     
     // 특수문자 비율이 너무 높으면 제외 (예: "!@#$%")
-    // 완화: 50% 이상인 경우만 제외 (이전: 30%)
     const specialCharRatio = (box.match(/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g) || []).length / box.length;
     if (specialCharRatio > 0.5) return false;
     
     // 공백만 있는 경우 제외
     if (!box.replace(/\s+/g, '').trim()) return false;
     
-    // 4자 이상이면 유지 (키워드 유무와 관계없이)
-    // 의미있는 키워드가 있으면 우선적으로 유지하지만, 키워드가 없어도 4자 이상이면 유지
+    // 다크패턴 확률이 전혀 없을 법한 내용 제외
+    // 1. EXCLUDE_SHORT_WORDS 패턴에 해당하는 경우
+    if (EXCLUDE_SHORT_WORDS.some(pattern => pattern.test(box))) {
+      return false;
+    }
+    
+    // 2. 너무 짧은 단어들 (3자 이하) - 이미 4자 미만 체크로 걸러짐
+    // 3. 의미없는 단일 단어/숫자 조합
+    const words = box.split(/\s+/).filter(w => w.trim());
+    if (words.length === 1 && words[0].length <= 3) {
+      return false;
+    }
+    
+    // 4. 순수한 숫자/특수문자 조합만 있는 경우
+    const meaningfulChars = box.replace(/[\d\s!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/g, '');
+    if (meaningfulChars.length === 0) {
+      return false;
+    }
+    
+    // 5. 다크패턴 키워드가 전혀 없는 매우 짧은 텍스트 (10자 이하) 제외
+    // 다만 키워드가 있으면 유지
+    const hasKeyword = DARK_PATTERN_KEYWORDS.some(pattern => pattern.test(box));
+    if (!hasKeyword && box.length <= 10) {
+      return false;
+    }
+    
+    // 나머지는 유지
     return true;
   });
   
