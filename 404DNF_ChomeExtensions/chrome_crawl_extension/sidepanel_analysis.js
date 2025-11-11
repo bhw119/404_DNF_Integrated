@@ -344,7 +344,7 @@ async function fetchDocForAnalysis() {
             // string이 원본 텍스트, translatedString은 번역된 텍스트 (사용하지 않음)
             const rawText = String(it.string ?? "");
             // 텍스트가 너무 길면 UI에서만 잘라서 표시 (하이라이트용 원본은 유지)
-            const displayText = rawText.length > 500 ? `${rawText.substring(0, 500)}…` : rawText;
+            const displayText = rawText.length > 30 ? `${rawText.substring(0, 500)}…` : rawText;
             
             return {
               text: displayText,
