@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 from datetime import datetime
+from typing import Any, Dict, List, Optional
 from model.predictor import process_image_and_predict, process_text_and_predict, parse_text_blocks
 
 # stdout 버퍼링 비활성화 (로그 즉시 출력)
@@ -166,6 +167,7 @@ def watch_extension_collection():
                         # fullText(번역된 텍스트)와 originalText(원본 텍스트) 가져오기
                         full_text = doc.get("fullText")  # 번역된 영어 텍스트 (모델링용) - * 기준으로 구분됨
                         original_text = doc.get("originalText")  # 원본 한글 텍스트 (표시용) - * 기준으로 구분됨
+                        structured_blocks = doc.get("structuredBlocks")
                         
                         if not full_text:
                             print(f"⚠️ [문서 {doc_id}] fullText가 없습니다. 건너뜁니다.")
@@ -205,11 +207,78 @@ def watch_extension_collection():
                         sys.stdout.flush()
                         
                         try:
-                            # 진행 상황 추적을 위한 변수
-                            total_count = len(sentences)
-                            current_count = [0]  # 리스트로 감싸서 참조 가능하게
+                            # structuredBlocks 기반 블록 구성 (태그/셀렉터 유지)
+                            def star_to_plain(value: Optional[str]) -> str:
+                                if not value:
+                                    return ""
+                                text_value = str(value).replace("*", " ")
+                                return re.sub(r"\s+", " ", text_value).strip()
                             
-                            # Extension 문서에 진행 상황 업데이트
+                            block_entries: List[Dict[str, Any]] = []
+                            if isinstance(structured_blocks, list) and structured_blocks:
+                                for blk in structured_blocks:
+                                    if not isinstance(blk, dict):
+                                        continue
+                                    translated_star = blk.get("text") or blk.get("plainText") or ""
+                                    translated_plain = blk.get("translatedPlainText") or star_to_plain(translated_star)
+                                    original_star = blk.get("originalText") or blk.get("rawText") or translated_star
+                                    original_plain = blk.get("originalPlainText") or blk.get("rawPlainText") or star_to_plain(original_star)
+                                    if not translated_plain and not original_plain:
+                                        continue
+                                    block_entries.append({
+                                        "translated_star": translated_star,
+                                        "translated_plain": translated_plain,
+                                        "original_star": original_star,
+                                        "original_plain": original_plain,
+                                        "meta": {
+                                            "index": blk.get("index"),
+                                            "selector": blk.get("selector"),
+                                            "tag": blk.get("tag"),
+                                            "frameUrl": blk.get("frameUrl"),
+                                            "frameTitle": blk.get("frameTitle"),
+                                            "frameBlockIndex": blk.get("frameBlockIndex"),
+                                            "blockType": blk.get("blockType"),
+                                            "frameId": blk.get("frameId"),
+                                            "linkHref": blk.get("linkHref"),
+                                        }
+                                    })
+                            else:
+                                translated_sentences = parse_text_blocks(full_text)
+                                original_sentences = parse_text_blocks(original_text)
+                                for idx, translated_plain in enumerate(translated_sentences):
+                                    original_plain = original_sentences[idx] if idx < len(original_sentences) else translated_plain
+                                    block_entries.append({
+                                        "translated_star": translated_plain,
+                                        "translated_plain": translated_plain,
+                                        "original_star": original_plain,
+                                        "original_plain": original_plain,
+                                        "meta": {
+                                            "index": idx,
+                                            "linkHref": None
+                                        }
+                                    })
+                            
+                            # 중복 블록 제거 (텍스트 기준)
+                            unique_entries = []
+                            seen_entries = set()
+                            for entry in block_entries:
+                                text_key = (entry.get("original_plain") or entry.get("translated_plain") or "").strip().lower()
+                                if not text_key:
+                                    continue
+                                if text_key in seen_entries:
+                                    continue
+                                seen_entries.add(text_key)
+                                unique_entries.append(entry)
+                            block_entries = unique_entries
+
+                            total_count = len(block_entries)
+                            if total_count == 0:
+                                print(f"⚠️ [경고] 처리할 블록이 없습니다. 문서 {doc_id} 건너뜁니다.")
+                                processed_ids.add(doc_id)
+                                continue
+                            
+                            current_count = [0]
+                            
                             def update_progress(current, total):
                                 current_count[0] = current
                                 try:
@@ -223,7 +292,6 @@ def watch_extension_collection():
                                 except Exception as e:
                                     print(f"⚠️ [진행 상황 업데이트 실패] {str(e)}")
                             
-                            # 모델링 시작 상태 업데이트
                             extension_col.update_one(
                                 {"_id": doc_id},
                                 {"$set": {
@@ -232,47 +300,28 @@ def watch_extension_collection():
                                 }}
                             )
                             
-                            print(f"\n🔄 [모델링 시작] {total_count}개 문장 처리 예정\n")
+                            print(f"\n🔄 [모델링 시작] {total_count}개 블록 처리 예정\n")
                             sys.stdout.flush()
                             
-                            # originalText/translatedText 블록 파싱
-                            original_sentences = parse_text_blocks(original_text)
-                            translated_sentences = sentences
-                            
-                            # 원본과 번역된 문장 수가 같은지 확인
-                            if len(original_sentences) != len(translated_sentences):
-                                print(f"⚠️ [경고] 원본 문장 수({len(original_sentences)})와 번역 문장 수({len(translated_sentences)})가 다릅니다.")
-                                print(f"   원본 문장 수에 맞춰 매핑합니다.")
-                                sys.stdout.flush()
-                            
-                            # fullText를 * 기준으로 분리하여 모델 실행 (진행 상황 콜백 전달)
                             print("🚀 [모델 실행 시작] process_text_and_predict() 호출")
                             sys.stdout.flush()
                             
-                            results = process_text_and_predict(full_text, progress_callback=update_progress)
+                            translated_list_for_model = [entry["translated_plain"] for entry in block_entries]
+                            results = process_text_and_predict(translated_list_for_model, progress_callback=update_progress)
                             
-                            # 결과에 원본 텍스트 매핑 (인덱스 기반)
-                            # 중요: original_sentences와 translated_sentences의 순서가 일치해야 함
-                            print(f"📝 [원본 텍스트 매핑] 원본: {len(original_sentences)}개, 번역: {len(translated_sentences)}개, 결과: {len(results)}개")
+                            print(f"📝 [원본 텍스트 매핑] 블록: {len(block_entries)}개, 결과: {len(results)}개")
                             sys.stdout.flush()
                             
                             for idx, result in enumerate(results):
-                                # 같은 인덱스의 원본 텍스트 매핑
-                                if idx < len(original_sentences):
-                                    result["original_text"] = original_sentences[idx]
-                                    # 디버깅: 처음 몇 개만 로그 출력
-                                    if idx < 3:
-                                        print(f"   [{idx+1}] 원본 매핑: {original_sentences[idx][:50]}")
-                                        sys.stdout.flush()
-                                elif idx < len(translated_sentences):
-                                    # 원본이 없으면 번역된 텍스트를 원본으로 사용 (비권장)
-                                    result["original_text"] = translated_sentences[idx]
-                                    print(f"   ⚠️ [{idx+1}] 원본 없음, 번역본 사용: {translated_sentences[idx][:50]}")
-                                    sys.stdout.flush()
-                                else:
-                                    # 인덱스가 범위를 벗어나면 result의 text 사용 (비권장)
-                                    result["original_text"] = result.get("text", "")
-                                    print(f"   ⚠️ [{idx+1}] 인덱스 범위 초과, result.text 사용: {result.get('text', '')[:50]}")
+                                if idx >= len(block_entries):
+                                    break
+                                entry = block_entries[idx]
+                                result["original_text"] = entry["original_plain"]
+                                result["structured_meta"] = entry["meta"]
+                                result["translated_text"] = entry["translated_plain"]
+                                if idx < 3:
+                                    preview = entry["original_plain"] or entry["translated_plain"]
+                                    print(f"   [{idx+1}] 원본 매핑: {preview[:50]}")
                                     sys.stdout.flush()
                             
                             print(f"\n✅ [모델링 완료] 총 {len(results)}개 텍스트 처리 완료\n")
@@ -283,7 +332,6 @@ def watch_extension_collection():
                                 processed_ids.add(doc_id)
                                 continue
                             
-                            # 다크패턴 통계
                             dark_count = sum(1 for r in results if r.get("is_darkpattern") == 1)
                             normal_count = len(results) - dark_count
                             print("=" * 80)
@@ -294,65 +342,62 @@ def watch_extension_collection():
                             print(f"   - 다크패턴 비율: {round(dark_count/len(results)*100, 1)}%")
                             print("=" * 80)
                             
-                            # 각 텍스트별 결과를 MongoDB에 저장
                             print(f"\n💾 [MongoDB 저장 시작] 결과를 model 컬렉션에 저장 중\n")
                             saved_count = 0
                             dark_saved = 0
+                            seen_result_docs = set()
                             
                             for idx, result in enumerate(results, 1):
                                 try:
-                                    # 요청된 필드 형식으로 저장
                                     prob_value = result.get("probability")
-                                    # probability를 0~100 정수로 변환 (0.9234 -> 92)
                                     probability_int = int(round(prob_value * 100)) if prob_value is not None else None
                                     is_dark = result.get("is_darkpattern", 0)
                                     
-                                    # 원본 텍스트 가져오기 (original_text가 확실히 설정되어 있어야 함)
-                                    original_string = result.get("original_text")
-                                    if not original_string:
-                                        # original_text가 없으면 원본 sentences에서 직접 가져오기 시도
-                                        result_idx = idx - 1  # enumerate는 1부터 시작하므로 -1
-                                        if result_idx < len(original_sentences):
-                                            original_string = original_sentences[result_idx]
-                                            print(f"   ⚠️ [{idx}] original_text가 비어있어서 original_sentences에서 직접 가져옴")
-                                        else:
-                                            # 최후의 수단: 번역된 텍스트 사용
-                                            original_string = result.get("text", "")
-                                            print(f"   ⚠️ [{idx}] original_text가 없어서 번역본 사용 (비권장)")
+                                    entry = block_entries[idx - 1] if (idx - 1) < len(block_entries) else None
+                                    original_string = result.get("original_text") or (entry.get("original_plain") if entry else "")
+                                    translated_string = result.get("translated_text") or (entry.get("translated_plain") if entry else result.get("text", ""))
                                     
-                                    translated_string = result.get("text", "")  # 번역된 텍스트
-                                    
-                                    # 디버깅: 다크패턴인 경우 원본 텍스트 확인
                                     if is_dark and idx <= 3:
                                         print(f"   🔍 [{idx}] 다크패턴 저장 - 원본: {original_string[:60]}")
                                         sys.stdout.flush()
+
+                                    normalized_original = original_string.strip().lower()
+                                    if normalized_original in seen_result_docs:
+                                        continue
+                                    seen_result_docs.add(normalized_original)
                                     
+                                    meta_info = result.get("structured_meta") or (entry.get("meta") if entry else None)
+                                    link_href_value = None
+                                    link_selector_value = None
+                                    if isinstance(meta_info, dict):
+                                        link_href_value = meta_info.get("linkHref")
+                                        link_selector_value = meta_info.get("linkSelector")
+
                                     result_doc = {
-                                        "string": original_string,  # 원본 텍스트 (표시용) - 반드시 원본이어야 함
-                                        "translatedString": translated_string,  # 번역된 텍스트 (참고용)
-                                        "type": result.get("type"),  # 다크패턴 유형
-                                        "predicate": result.get("predicate"),  # predicate
-                                        "probability": probability_int,  # 예측 확률값 (0~100 정수)
-                                        "is_darkpattern": is_dark,  # 다크패턴 여부
-                                        "id": str(doc_id),  # extension 문서 ID
-                                        # _id는 MongoDB가 자동 생성
+                                        "string": original_string,
+                                        "translatedString": translated_string,
+                                        "type": result.get("type"),
+                                        "predicate": result.get("predicate"),
+                                        "probability": probability_int,
+                                        "is_darkpattern": is_dark,
+                                        "id": str(doc_id),
+                                        "structuredMeta": meta_info,
+                                        "linkHref": link_href_value,
+                                        "linkSelector": link_selector_value
                                     }
                                     model_col.insert_one(result_doc)
                                     saved_count += 1
                                     if is_dark:
                                         dark_saved += 1
                                     
-                                    # 진행 상황 로그 (10개마다 또는 다크패턴인 경우)
                                     if idx % 10 == 0 or is_dark == 1:
                                         status = "🔴 다크패턴" if is_dark else "⚪ 일반"
                                         print(f"   [{idx}/{len(results)}] {status} 저장: {original_string[:60]}")
-                                        
                                 except Exception as save_error:
                                     print(f"❌ [저장 실패 {idx}/{len(results)}] {str(save_error)}")
                                     import traceback
                                     traceback.print_exc()
                             
-                            # 모델링 완료 상태 업데이트
                             extension_col.update_one(
                                 {"_id": doc_id},
                                 {"$set": {
@@ -362,7 +407,6 @@ def watch_extension_collection():
                                 }}
                             )
                             
-                            # 처리 완료 표시
                             processed_ids.add(doc_id)
                             print("\n" + "=" * 80)
                             print(f"✅ [처리 완료] 문서 {doc_id}")

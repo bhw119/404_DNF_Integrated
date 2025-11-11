@@ -82,10 +82,16 @@ async function translateBlocks(blocks, onProgress){
 }
 
 function shouldKeepBlock(block){
-  const trimmed = (block || '').trim();
+  const text = typeof block === 'string' ? block : (block && typeof block.text === 'string' ? block.text : '');
+  const trimmed = (text || '').trim();
   if(!trimmed) return false;
 
   const plain = trimmed.replace(/\*/g, ' ').replace(/\s+/g, ' ').trim();
+  const dateLike =
+    /\d{1,2}\s*월\s*\d{1,2}\s*일/.test(plain) ||
+    /\d{4}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{1,2}/.test(plain) ||
+    /\d{1,2}\s*[./-]\s*\d{1,2}\s*[./-]\s*\d{2,4}/.test(plain);
+  if(dateLike) return false;
   if(plain.length < 4) return false;
 
   const digitRatio = (plain.match(/\d/g) || []).length / plain.length;
@@ -156,16 +162,39 @@ function shouldKeepBlock(block){
 async function getActiveTab(){
   const [tab] = await chrome.tabs.query({ active:true, currentWindow:true });
   return tab;
-}
+} 
 
 /* ===== 전 프레임 통합 dedupe(확장 컨텍스트에서 수행) ===== */
-function canonKeyGlobal(s){
-  return (s || '')
+function canonKeyGlobal(entry){
+  const isObject = entry && typeof entry === 'object';
+  const rawText = typeof entry === 'string' ? entry : (isObject && typeof entry.text === 'string' ? entry.text : '');
+  const normalizedText = rawText
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[^0-9\p{L}]+/gu, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+  if(!isObject){
+    return `text|${normalizedText}`;
+  }
+  const tag = (entry.tag || '').toString().toLowerCase();
+  const selector = (entry.selector || '').toString().toLowerCase();
+  const blockType = (entry.blockType || '').toString().toLowerCase();
+  const frameIdx = Number.isFinite(entry.frameBlockIndex) ? entry.frameBlockIndex : '';
+  const frameId = Number.isFinite(entry.frameId) ? entry.frameId : (entry.frameId || '');
+  const linkHref = (entry.linkHref || '').toString().toLowerCase();
+  const linkSelector = (entry.linkSelector || '').toString().toLowerCase();
+  return [
+    'obj',
+    tag,
+    selector,
+    blockType,
+    frameIdx,
+    frameId,
+    linkSelector,
+    linkHref,
+    normalizedText
+  ].join('|');
 }
 
 function dedupeBlocksGlobal(blocks){
@@ -182,8 +211,10 @@ function dedupeBlocksGlobal(blocks){
 }
 
 function dedupeInsideBlockGlobal(block){
-  if(!block) return '';
-  const toks = block.split('*').map(t => t.trim()).filter(Boolean);
+  if(!block) return block;
+  const text = typeof block === 'string' ? block : block.text;
+  if(!text) return block;
+  const toks = text.split('*').map(t => t.trim()).filter(Boolean);
   const seen = new Set();
   const out = [];
   for(const t of toks){
@@ -193,35 +224,99 @@ function dedupeInsideBlockGlobal(block){
     seen.add(k);
     out.push(t);
   }
-  return out.join('*');
+  const joined = out.join('*');
+  if(typeof block === 'string') return joined;
+  return {
+    ...block,
+    text: joined,
+    plainText: joined.replace(/\*/g, ' '),
+    rawText: block.rawText ?? block.text,
+    rawPlainText: block.rawPlainText ?? block.plainText
+  };
 }
 
 function mergeFramesAndDedupe(frameResults){
   const allBlocks = [];
   for(const r of frameResults){
+    if(Array.isArray(r?.blocks)){
+      for(const blk of r.blocks){
+        allBlocks.push({
+          ...blk,
+          frameUrl: blk.frameUrl || r.frameUrl || '',
+          frameTitle: blk.frameTitle || r.title || '',
+          frameId: blk.frameId ?? r.frameId ?? null
+        });
+      }
+      continue;
+    }
     const text = (r?.text || '').trim();
     if(!text) continue;
-    const bs = text.split('#').map(s => s.trim()).filter(Boolean);
+    const bs = text.split('#').map(s => s.trim()).filter(Boolean).map((str, idx) => ({
+      text: str,
+      plainText: str.replace(/\*/g, ' '),
+      rawText: str,
+      rawPlainText: str.replace(/\*/g, ' '),
+      selector: '',
+      tag: '',
+      frameUrl: r.frameUrl || '',
+      frameTitle: r.title || '',
+      frameBlockIndex: idx,
+      blockType: 'legacy',
+      frameId: r.frameId ?? null,
+      linkHref: '',
+      linkSelector: ''
+    }));
     allBlocks.push(...bs);
   }
   const normalizedBlocks = allBlocks.map(dedupeInsideBlockGlobal);
-  const uniqBlocks = dedupeBlocksGlobal(normalizedBlocks);
-  return uniqBlocks.join('#');
+  return dedupeBlocksGlobal(normalizedBlocks);
+}
+
+function normalizeBlockText(block){
+  if(!block) return '';
+  const raw = typeof block === 'string' ? block : (block.plainText || block.text || '');
+  return raw
+    .toString()
+    .replace(/\*/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
 }
 
 /* ===== 프레임 내부에서 실행되는 함수(주입 함수) ===== */
 function frameCollectByBlocks(){
   // ── 프레임 내부에서도 사용 가능한 dedupe 유틸(여기 정의 必)
-  function canonKeyLocal(s){
-    return (s || '')
+  function canonKeyLocal(entry){
+    const isObject = entry && typeof entry === 'object';
+    const rawText = typeof entry === 'string' ? entry : (isObject && typeof entry.text === 'string' ? entry.text : '');
+    const normalizedText = rawText
       .normalize('NFKC')
       .toLowerCase()
       .replace(/[^0-9\p{L}]+/gu, ' ')
       .replace(/\s+/g, ' ')
       .trim();
+    if(!isObject){
+      return `text|${normalizedText}`;
+    }
+    const tag = (entry.tag || '').toString().toLowerCase();
+    const selector = (entry.selector || '').toString().toLowerCase();
+    const blockType = (entry.blockType || '').toString().toLowerCase();
+    const frameIdx = Number.isFinite(entry.frameBlockIndex) ? entry.frameBlockIndex : '';
+  const linkHref = (entry.linkHref || '').toString().toLowerCase();
+  const linkSelector = (entry.linkSelector || '').toString().toLowerCase();
+    return [
+      'obj',
+      tag,
+      selector,
+      blockType,
+      frameIdx,
+    linkSelector,
+    linkHref,
+      normalizedText
+    ].join('|');
   }
 
-  function dedupeBlocksLocal(blocks){
+function dedupeBlocksLocal(blocks){
     const seen = new Set();
     const out = [];
     for(const b of blocks){
@@ -235,8 +330,10 @@ function frameCollectByBlocks(){
   }
 
   function dedupeInsideBlockLocal(block){
-    if(!block) return '';
-    const toks = block.split('*').map(t => t.trim()).filter(Boolean);
+    if(!block) return block;
+    const text = typeof block === 'string' ? block : block.text;
+    if(!text) return block;
+    const toks = text.split('*').map(t => t.trim()).filter(Boolean);
     const seen = new Set();
     const out = [];
     for(const t of toks){
@@ -246,7 +343,15 @@ function frameCollectByBlocks(){
       seen.add(k);
       out.push(t);
     }
-    return out.join('*');
+    const joined = out.join('*');
+    if(typeof block === 'string') return joined;
+  return {
+    ...block,
+    text: joined,
+    plainText: joined.replace(/\*/g, ' '),
+    rawText: block.rawText ?? block.text,
+    rawPlainText: block.rawPlainText ?? block.plainText
+  };
   }
 
   const EXCLUDE = new Set([
@@ -307,7 +412,7 @@ function frameCollectByBlocks(){
       for(const ch of el.querySelectorAll('div,p,li,h1,h2,h3,h4,h5,h6,figure,figcaption,table,caption')){
         if(set.has(ch)) continue;
         const t = (ch.textContent||'').trim();
-        if(t.length>8){ hasTextChild = true; break; }
+        if(t.length >= 2){ hasTextChild = true; break; }
       }
       if(!hasTextChild) keep.push(el);
     }
@@ -319,6 +424,18 @@ function frameCollectByBlocks(){
     return text.split(/\s+/).filter(Boolean).join('*');
   }
 
+function extractPrimaryLink(el){
+  if(!el) return null;
+  const anchor = el.closest('a[href]') || el.querySelector('a[href]');
+  if(anchor && typeof anchor.href === 'string' && anchor.href.trim()){
+    return {
+      href: anchor.href,
+      selector: getDomPath(anchor)
+    };
+  }
+  return null;
+}
+
   function getTitle(){
     const og = document.querySelector('meta[property="og:title"]')?.content?.trim();
     const tw = document.querySelector('meta[name="twitter:title"]')?.content?.trim();
@@ -327,26 +444,97 @@ function frameCollectByBlocks(){
     return [og,tw,h1,dt].filter(Boolean)[0] || '';
   }
 
+  function getDomPath(el){
+    if(!el || el.nodeType !== Node.ELEMENT_NODE) return '';
+    const segments = [];
+    let current = el;
+    while(current && current.nodeType === Node.ELEMENT_NODE){
+      let segment = current.tagName.toLowerCase();
+      if(current.id){
+        segment += `#${current.id}`;
+        segments.unshift(segment);
+        break;
+      }
+      const parent = current.parentElement;
+      if(parent){
+        const siblings = Array.from(parent.children).filter(child => child.tagName === current.tagName);
+        if(siblings.length > 1){
+          const index = siblings.indexOf(current);
+          segment += `:nth-of-type(${index + 1})`;
+        }
+      }
+      segments.unshift(segment);
+      current = current.parentElement;
+    }
+    return segments.join(' > ');
+  }
+
   const all = Array.from(document.querySelectorAll(BLOCK_SEL)).filter(isVisible);
   const texty = all.filter(el => (el.textContent||'').trim().length >= 2);
   const leafs = pickLeafBlocks(texty);
 
   let blocks = [];
   const title = getTitle();
-  if(title) blocks.push(toStarWords(title));
+  if(title){
+    const starTitle = toStarWords(title);
+    const frameBlockIndex = blocks.length;
+    blocks.push({
+      text: starTitle,
+      plainText: title,
+      rawText: starTitle,
+      rawPlainText: title,
+      selector: 'head > title',
+      tag: 'title',
+      frameUrl: location.href || '',
+      frameTitle: title || '',
+      frameBlockIndex,
+      blockType: 'title',
+      linkHref: null,
+      linkSelector: null
+    });
+  }
 
   for(const el of leafs){
     const t = extractText(el);
     if(!t) continue;
     if(t.length < 2) continue;
-    blocks.push(toStarWords(t));
+    const star = toStarWords(t);
+    const frameBlockIndex = blocks.length;
+    const linkMeta = extractPrimaryLink(el);
+    blocks.push({
+      text: star,
+      plainText: t,
+      rawText: star,
+      rawPlainText: t,
+      selector: getDomPath(el),
+      tag: el.tagName.toLowerCase(),
+      frameUrl: location.href || '',
+      frameTitle: title || '',
+      frameBlockIndex,
+      blockType: 'content',
+      linkHref: linkMeta?.href || null,
+      linkSelector: linkMeta?.selector || null
+    });
   }
 
   if(blocks.length === 0){
     const t = (document.body?.innerText || '').replace(/\s+/g,' ').trim();
     if(t){
       const star = toStarWords(t);
-      if(star) blocks.push(star);
+      if(star) blocks.push({
+        text: star,
+        plainText: t,
+        rawText: star,
+        rawPlainText: t,
+        selector: 'body',
+        tag: 'body',
+        frameUrl: location.href || '',
+        frameTitle: title || '',
+        frameBlockIndex: 0,
+        blockType: 'fallback',
+        linkHref: null,
+        linkSelector: null
+      });
     }
   }
 
@@ -357,7 +545,8 @@ function frameCollectByBlocks(){
   return {
     frameUrl: location.href || '',
     title: title || '',
-    text: blocks.join('#')
+    blocks,
+    text: blocks.map(b => b.text).join('#')
   };
 }
 
@@ -368,7 +557,16 @@ function assembleOutput(tabInfo, frameResults){
     `# Snapshot @ ${ts}`,
     `Tab: ${tabInfo.title || ''} | ${tabInfo.url || ''}`,
     `Frames: ${frameResults.length}`,
-    frameResults.map((r,i)=>`---\n[Frame ${i+1}] ${r.frameUrl}\n${(r.text||'').slice(0,800)}...`).join('\n')
+    frameResults.map((r,i)=>{
+      if(Array.isArray(r?.blocks)){
+        const preview = r.blocks.slice(0,5).map((blk,idx)=>{
+          const plain = (blk?.plainText || blk?.text || '').replace(/\*/g,' ');
+          return `[Block ${idx+1}] ${plain.slice(0,160)}${plain.length>160?'…':''}`;
+        }).join('\n');
+        return `---\n[Frame ${i+1}] ${r.frameUrl}\n${preview}`;
+      }
+      return `---\n[Frame ${i+1}] ${r.frameUrl}\n${(r.text||'').slice(0,800)}...`;
+    }).join('\n')
   ].join('\n');
 }
 
@@ -437,20 +635,42 @@ extractBtn.addEventListener('click', async ()=>{
       func: frameCollectByBlocks
     });
 
-    const frameResults = (results||[]).map(r=>r.result).filter(Boolean);
+    const frameResults = (results||[])
+      .map((entry) => {
+        if(!entry || !entry.result) return null;
+        const base = { ...entry.result };
+        if(typeof entry.frameId === 'number') base.frameId = entry.frameId;
+        if(typeof entry.documentId === 'string') base.documentId = entry.documentId;
+        return base;
+      })
+      .filter(Boolean);
 
     // 비어있을 경우 최상위 프레임 폴백
-    const any = frameResults.some(r => (r.text||'').trim().length>0);
+    const any = frameResults.some(r => {
+      if(Array.isArray(r?.blocks)) return r.blocks.length > 0;
+      return Boolean((r?.text || '').trim().length);
+    });
     if(!any){
       const retry = await chrome.scripting.executeScript({
         target:{ tabId: tab.id, allFrames: false },
         func: frameCollectByBlocks
       });
-      const rr = (retry||[]).map(r=>r.result).filter(Boolean);
+      const rr = (retry||[])
+        .map((entry) => {
+          if(!entry || !entry.result) return null;
+          const base = { ...entry.result };
+          if(typeof entry.frameId === 'number') base.frameId = entry.frameId;
+          if(typeof entry.documentId === 'string') base.documentId = entry.documentId;
+          return base;
+        })
+        .filter(Boolean);
       frameResults.push(...rr);
     }
 
-    if(frameResults.length===0 || !frameResults.some(r=> (r.text||'').trim())){
+    if(frameResults.length===0 || !frameResults.some(r=>{
+      if(Array.isArray(r?.blocks)) return r.blocks.some(b => (b?.text || '').trim());
+      return (r?.text || '').trim();
+    })){
       setStatus('수집된 데이터가 없습니다(폴백 실패).');
       console.debug('DEBUG(no-data):', assembleOutput(tab, frameResults));
       return;
@@ -459,32 +679,66 @@ extractBtn.addEventListener('click', async ()=>{
     console.debug(assembleOutput(tab, frameResults));
 
     // 전 프레임 통합 2차 dedupe
-    const mergedDedupe = mergeFramesAndDedupe(frameResults);
+    const mergedBlocks = mergeFramesAndDedupe(frameResults);
 
-    const rawBlocks = mergedDedupe
-      .split('#')
-      .map(b => b.trim())
-      .filter(Boolean);
+    const filteredBlocks = mergedBlocks.filter(shouldKeepBlock);
+    const uniqueBlocks = [];
+    const seenBlockKeys = new Set();
+    for(const block of filteredBlocks){
+      if(!block) continue;
+      const normalizedText = normalizeBlockText(block);
+      if(!normalizedText) continue;
+      const selectorKey = (block.selector || '').toString();
+      const frameKey = (block.frameUrl || '').toString();
+      const linkKey = (block.linkHref || '').toString();
+      const linkSelectorKey = (block.linkSelector || '').toString();
+      const combinedKey = `${normalizedText}|${selectorKey}|${frameKey}|${linkKey}|${linkSelectorKey}`;
+      if(seenBlockKeys.has(combinedKey)) continue;
+      seenBlockKeys.add(combinedKey);
+      uniqueBlocks.push(block);
+    }
 
-    const filteredBlocks = rawBlocks.filter(shouldKeepBlock);
-
-    if(filteredBlocks.length === 0){
+    if(uniqueBlocks.length === 0){
       setStatus('⚠️ 유의미한 텍스트가 없습니다.');
       console.warn('[필터] 유지된 블록이 없어 전송을 중단합니다.');
       return;
     }
 
-    const originalText = filteredBlocks.join('#');
+    const originalBlocks = uniqueBlocks.map((block, index) => ({
+      ...block,
+      index,
+      originalText: block.text,
+      originalPlainText: block.plainText ?? block.text.replace(/\*/g, ' ')
+    }));
 
-    let fullText = originalText;
-    if(filteredBlocks.some(containsKorean)){
-      setStatus('번역 중... (1/' + filteredBlocks.length + ')');
-      const translatedBlocks = await translateBlocks(filteredBlocks, (cur,total)=>{
+    const originalText = originalBlocks.map(b => b.originalText).join('#');
+
+    let translatedBlocks = originalBlocks.map(block => ({ ...block }));
+    if(translatedBlocks.some(b => containsKorean(b.text))){
+      setStatus('번역 중... (1/' + translatedBlocks.length + ')');
+      const translatedTexts = await translateBlocks(translatedBlocks.map(b => b.text), (cur,total)=>{
         setStatus(`번역 중... (${cur}/${total})`);
       });
-      fullText = translatedBlocks.join('#');
+      translatedBlocks = translatedBlocks.map((block, idx) => {
+        const nextText = (translatedTexts && translatedTexts[idx]) ? translatedTexts[idx] : block.text;
+        const translatedPlain = nextText.replace(/\*/g, ' ');
+        return {
+          ...block,
+          text: nextText,
+          translated: nextText !== block.originalText,
+          translatedPlainText: translatedPlain
+        };
+      });
       setStatus('번역 완료');
+    }else{
+      translatedBlocks = translatedBlocks.map(block => ({
+        ...block,
+        translated: false,
+        translatedPlainText: block.text.replace(/\*/g, ' ')
+      }));
     }
+
+    const fullText = translatedBlocks.map(b => b.text).join('#');
 
     const payload = {
       tabUrl: tab.url || '',
@@ -493,7 +747,34 @@ extractBtn.addEventListener('click', async ()=>{
       framesCollected: frameResults.length,
       fullText,
       originalText,
-      frames: frameResults.map(r=>r.frameUrl)
+      frames: frameResults.map(r=>r.frameUrl),
+      frameMetadata: frameResults.map((r, idx) => ({
+        index: idx,
+        frameUrl: r.frameUrl,
+        frameId: typeof r.frameId === 'number' ? r.frameId : null,
+        title: r.title,
+        blocks: Array.isArray(r.blocks) ? r.blocks.length : ((r.text || '').split('#').filter(Boolean).length)
+      })),
+      structuredBlocks: translatedBlocks.map(block => ({
+        index: block.index,
+        selector: block.selector,
+        tag: block.tag,
+        frameUrl: block.frameUrl,
+        frameTitle: block.frameTitle,
+        frameBlockIndex: block.frameBlockIndex,
+        blockType: block.blockType,
+        frameId: block.frameId ?? null,
+        linkHref: block.linkHref || null,
+        linkSelector: block.linkSelector || null,
+        text: block.text,
+        plainText: block.plainText ?? block.text.replace(/\*/g, ' '),
+        originalText: block.originalText,
+        originalPlainText: block.originalPlainText,
+        rawText: block.rawText,
+        rawPlainText: block.rawPlainText,
+        translatedPlainText: block.translatedPlainText,
+        translated: block.translated
+      }))
     };
 
     let apiRes = null;

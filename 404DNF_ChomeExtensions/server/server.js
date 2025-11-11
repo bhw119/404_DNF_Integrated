@@ -30,6 +30,41 @@ await mongoose.connect(MONGODB_URI, {
 console.log(`✅ MongoDB 연결 성공: db=${mongoose.connection.db.databaseName}, collection=extension`);
 
 // ====== Mongoose 모델 (collection: extension) ======
+const StructuredBlockSchema = new mongoose.Schema(
+  {
+    index: { type: Number },
+    selector: { type: String },
+    tag: { type: String },
+    frameUrl: { type: String },
+    frameTitle: { type: String },
+    frameBlockIndex: { type: Number },
+    blockType: { type: String },
+    frameId: { type: Number },
+    linkHref: { type: String },
+    linkSelector: { type: String },
+    text: { type: String },
+    plainText: { type: String },
+    originalText: { type: String },
+    originalPlainText: { type: String },
+    rawText: { type: String },
+    rawPlainText: { type: String },
+    translatedPlainText: { type: String },
+    translated: { type: Boolean }
+  },
+  { _id: false }
+);
+
+const FrameMetaSchema = new mongoose.Schema(
+  {
+    index: { type: Number },
+    frameUrl: { type: String },
+    frameId: { type: Number },
+    title: { type: String },
+    blocks: { type: Number }
+  },
+  { _id: false }
+);
+
 const ExtensionDocSchema = new mongoose.Schema(
   {
     tabUrl: { type: String, required: true },
@@ -39,6 +74,8 @@ const ExtensionDocSchema = new mongoose.Schema(
     fullText: { type: String, required: true },      // 번역된 텍스트 (모델링용)
     originalText: { type: String, required: true },   // 원본 텍스트 (표시용)
     frames: [{ type: String }],
+    frameMetadata: { type: [FrameMetaSchema], default: [] },
+    structuredBlocks: { type: [StructuredBlockSchema], default: [] },
     clientId: { type: String },
     // 모델링 진행 상황 필드
     modelingStatus: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
@@ -95,6 +132,35 @@ app.use((req, res, next) => {
   next();
 });
 
+const StructuredBlockSchemaZ = z.object({
+  index: z.number().int().nonnegative().optional(),
+  selector: z.string().optional(),
+  tag: z.string().optional(),
+  frameUrl: z.string().optional(),
+  frameTitle: z.string().optional(),
+  frameBlockIndex: z.number().int().nonnegative().optional(),
+  blockType: z.string().optional(),
+  frameId: z.number().int().optional().nullable(),
+  linkHref: z.string().optional().nullable(),
+  linkSelector: z.string().optional().nullable(),
+  text: z.string().min(1),
+  plainText: z.string().optional(),
+  originalText: z.string().optional(),
+  originalPlainText: z.string().optional(),
+  rawText: z.string().optional(),
+  rawPlainText: z.string().optional(),
+  translatedPlainText: z.string().optional(),
+  translated: z.boolean().optional()
+});
+
+const FrameMetaSchemaZ = z.object({
+  index: z.number().int().nonnegative(),
+  frameUrl: z.string().optional(),
+  frameId: z.number().int().optional().nullable(),
+  title: z.string().optional(),
+  blocks: z.number().int().nonnegative().optional()
+});
+
 const PayloadSchema = z.object({
   tabUrl: z.string().url(),
   tabTitle: z.string().optional(),
@@ -103,6 +169,8 @@ const PayloadSchema = z.object({
   fullText: z.string().min(1),      // 번역된 텍스트 (모델링용)
   originalText: z.string().min(1),  // 원본 텍스트 (표시용)
   frames: z.array(z.string().url()).optional(),  // URL 배열
+  frameMetadata: z.array(FrameMetaSchemaZ).optional(),
+  structuredBlocks: z.array(StructuredBlockSchemaZ).optional(),
   clientId: z.string().optional()
 });
 
@@ -130,14 +198,16 @@ app.post('/collect', async (req, res) => {
     console.log('='.repeat(80));
     
     const doc = await ExtensionDoc.create({
-        tabUrl: parsed.tabUrl,
-        tabTitle: parsed.tabTitle,
-        collectedAt: new Date(parsed.collectedAt),
-        framesCollected: parsed.framesCollected,
-        fullText: parsed.fullText,           // 번역된 텍스트 (모델링용)
-        originalText: parsed.originalText,    // 원본 텍스트 (표시용)
-        frames: parsed.frames || [],
-        clientId: parsed.clientId
+      tabUrl: parsed.tabUrl,
+      tabTitle: parsed.tabTitle,
+      collectedAt: new Date(parsed.collectedAt),
+      framesCollected: parsed.framesCollected,
+      fullText: parsed.fullText,           // 번역된 텍스트 (모델링용)
+      originalText: parsed.originalText,    // 원본 텍스트 (표시용)
+      frames: parsed.frames || [],
+      frameMetadata: parsed.frameMetadata || [],
+      structuredBlocks: parsed.structuredBlocks || [],
+      clientId: parsed.clientId
     });
     
     console.log(`✅ [MongoDB 저장 완료]`);

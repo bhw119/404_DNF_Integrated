@@ -7,6 +7,20 @@
     low: `${BASE_CLASS} ${BASE_CLASS}--low`,
     default: BASE_CLASS,
   };
+  const ELEMENT_BASE_CLASS = "dpd-highlight-target";
+  const ELEMENT_CLASS_BY_SEVERITY = {
+    high: `${ELEMENT_BASE_CLASS} ${ELEMENT_BASE_CLASS}--high`,
+    mid: `${ELEMENT_BASE_CLASS} ${ELEMENT_BASE_CLASS}--mid`,
+    low: `${ELEMENT_BASE_CLASS} ${ELEMENT_BASE_CLASS}--low`,
+    default: ELEMENT_BASE_CLASS,
+  };
+  const ELEMENT_CLASS_VARIANTS = [
+    ELEMENT_BASE_CLASS,
+    `${ELEMENT_BASE_CLASS}--high`,
+    `${ELEMENT_BASE_CLASS}--mid`,
+    `${ELEMENT_BASE_CLASS}--low`,
+    "blink",
+  ];
 
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -40,6 +54,27 @@
         0%, 100% { outline-offset: 0; }
         50%      { outline-offset: 3px; }
       }
+      .${ELEMENT_BASE_CLASS} {
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.65), 0 0 0 6px rgba(255, 255, 255, 0.55);
+        border-radius: 6px;
+        transition: box-shadow .2s ease;
+      }
+      .${ELEMENT_BASE_CLASS}--high {
+        box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.75), 0 0 0 7px rgba(255, 255, 255, 0.6);
+      }
+      .${ELEMENT_BASE_CLASS}--mid {
+        box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.75), 0 0 0 7px rgba(255, 255, 255, 0.6);
+      }
+      .${ELEMENT_BASE_CLASS}--low {
+        box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.75), 0 0 0 7px rgba(255, 255, 255, 0.6);
+      }
+      .${ELEMENT_BASE_CLASS}.blink {
+        animation: dpd-element-blink 1s ease 0s 2;
+      }
+      @keyframes dpd-element-blink {
+        0%, 100% { box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.65), 0 0 0 6px rgba(255, 255, 255, 0.55); }
+        50%      { box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.85), 0 0 0 9px rgba(245, 158, 11, 0.75); }
+      }
     `;
     document.documentElement.appendChild(style);
   }
@@ -52,6 +87,10 @@
       while (el.firstChild) parent.insertBefore(el.firstChild, el);
       parent.removeChild(el);
       parent.normalize?.();
+    });
+    const elementTargets = root.querySelectorAll?.(`.${ELEMENT_BASE_CLASS}`);
+    elementTargets?.forEach((el) => {
+      ELEMENT_CLASS_VARIANTS.forEach((cls) => el.classList.remove(cls));
     });
   }
 
@@ -527,6 +566,40 @@
     return found;
   }
 
+  function highlightElement(element, { severity = "", scroll = true, log = true } = {}) {
+    if (!element) return false;
+    ensureStyle();
+    clearHighlights(document);
+    const className = ELEMENT_CLASS_BY_SEVERITY[severity] || ELEMENT_CLASS_BY_SEVERITY.default;
+    const classList = className.split(/\s+/).filter(Boolean);
+    element.classList.add(...classList);
+    element.classList.add("blink");
+    if (scroll) {
+      try {
+        element.scrollIntoView({ block: "center", behavior: "smooth" });
+      } catch {
+        /* noop */
+      }
+    }
+    setTimeout(() => element.classList.remove("blink"), 1400);
+    if (log) {
+      const rect = element.getBoundingClientRect();
+      console.log("[DPD][Highlight] element highlight", {
+        severity,
+        selector: getDomPath(element),
+        rect: {
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height,
+          bottom: rect.bottom,
+          right: rect.right,
+        },
+      });
+    }
+    return true;
+  }
+
   function highlightBulk(items) {
     try {
       ensureStyle();
@@ -558,12 +631,28 @@
       const payload = msg.payload || {};
       const text = String(payload.text || "");
       const severity = String(payload.severity || "");
+      const structuredMeta = payload.structuredMeta || {};
        console.log("[DPD][Highlight] highlight-in-page 수신", {
          textSample: text.slice(0, 120),
          severity,
          length: text.length,
        });
-      const ok = highlightText(text, { severity, scroll: true, clear: true, log: true });
+      let ok = false;
+      if (structuredMeta?.linkSelector) {
+        const element = document.querySelector(structuredMeta.linkSelector);
+        if (element) {
+          ok = highlightElement(element, { severity, scroll: true, log: true });
+        }
+      }
+      if (!ok && structuredMeta?.selector) {
+        const element = document.querySelector(structuredMeta.selector);
+        if (element) {
+          ok = highlightElement(element, { severity, scroll: true, log: true });
+        }
+      }
+      if (!ok) {
+        ok = highlightText(text, { severity, scroll: true, clear: true, log: true });
+      }
       sendResponse?.({ ok });
       return;
     }

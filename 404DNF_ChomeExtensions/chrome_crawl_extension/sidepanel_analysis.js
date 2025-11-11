@@ -339,21 +339,35 @@ async function fetchDocForAnalysis() {
         });
         
         if (darkPatternItems.length > 0) {
-          state.items = darkPatternItems.map((it) => {
+          const seenCardKeys = new Set();
+          state.items = darkPatternItems.flatMap((it) => {
             // 원본 텍스트만 사용 (string 필드에 원본이 저장됨)
             // string이 원본 텍스트, translatedString은 번역된 텍스트 (사용하지 않음)
             const rawText = String(it.string ?? "");
             // 텍스트가 너무 길면 UI에서만 잘라서 표시 (하이라이트용 원본은 유지)
-            const displayText = rawText.length > 30 ? `${rawText.substring(0, 500)}…` : rawText;
+            const displayText = rawText.length > 500 ? `${rawText.substring(0, 500)}…` : rawText;
+            const structuredMeta = it.structuredMeta || it.meta?.structuredMeta || null;
+            const dedupeKey = [
+              rawText.trim().toLowerCase(),
+              it.type ?? '',
+              structuredMeta?.selector ?? '',
+              structuredMeta?.linkHref ?? '',
+              structuredMeta?.linkSelector ?? ''
+            ].join('|');
+            if (seenCardKeys.has(dedupeKey)) {
+              return [];
+            }
+            seenCardKeys.add(dedupeKey);
             
-            return {
+            return [{
               text: displayText,
               rawText,
               probability: typeof it.probability === "number" ? it.probability : undefined,
               label: it.type ?? "",
               subtype: it.predicate ?? "",
+              structuredMeta,
               meta: it,
-            };
+            }];
           });
         } else {
           // 모델 결과는 있지만 다크패턴이 없는 경우
@@ -513,6 +527,7 @@ function renderList() {
             range: it.range,
             frameIndex: it.frameIndex,
             docId: currentDocId,
+            structuredMeta: it.structuredMeta || it.meta?.structuredMeta || null,
           }
         };
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
