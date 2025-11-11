@@ -51,6 +51,7 @@ const state = {
   items: /** @type {Array<AnalysisItem>} */ ([]),
   filter: /** 'all' | 'high' | 'mid' | 'low' */ ('all'),
   modelProgress: /** @type {{status: string, current: number, total: number} | null} */ (null),
+  transferPending: false,
 };
 
 async function getActiveTab() {
@@ -269,32 +270,62 @@ async function fetchDocForAnalysis() {
 
     // 모델링 진행 상황 확인
     let modelingStatus = d?.modelingStatus || 'pending';
-    
-    // 모델링이 진행 중이면 아무것도 표시하지 않음
-    if (modelingStatus === 'processing') {
-      state.items = [];
-      renderCounts();
-      renderList();
-      setStatus("모델 분석이 진행 중입니다. 잠시만 기다려주세요...");
-      await broadcastHighlights();
-      return;
-    }
+    const modelingProgress = d?.modelingProgress || {};
+    const progressCurrent = Number(modelingProgress.current ?? 0);
+    const progressTotal = Number(modelingProgress.total ?? 0);
+    const progressPercent = progressTotal > 0 ? Math.min(100, Math.round((progressCurrent / progressTotal) * 100)) : 0;
+
+    // 기본 상태 초기화
+    state.transferPending = false;
 
     // 모델 결과를 /model API에서 가져오기
     let modelResults = [];
-    try {
-      if (currentDocId) {
+    const allowResultFetch = currentDocId && (modelingStatus === 'completed' || (modelingStatus === 'processing' && progressPercent === 100));
+    if (allowResultFetch) {
+      try {
         const modelRes = await fetch(`${API_BASE}/model?id=${encodeURIComponent(currentDocId)}`);
-      if (modelRes.ok) {
-        modelResults = await modelRes.json();
+        if (modelRes.ok) {
+          modelResults = await modelRes.json();
+        }
+      } catch (e) {
+        console.warn('모델 결과 조회 실패:', e);
       }
+    }
+
+    if (modelingStatus === 'processing') {
+      state.modelProgress = {
+        status: 'processing',
+        current: progressCurrent,
+        total: progressTotal,
+      };
+
+      if (progressPercent < 100) {
+        state.items = [];
+        renderCounts();
+        renderList();
+        setStatus("모델 분석이 진행 중입니다. 잠시만 기다려주세요...");
+        await broadcastHighlights();
+        return;
       }
-    } catch (e) {
-      console.warn('모델 결과 조회 실패:', e);
+
+      // 100% 완료되었지만 상태가 아직 processing인 경우
+      if (Array.isArray(modelResults) && modelResults.length > 0) {
+        // 결과가 이미 저장된 경우 즉시 표시하기 위해 completed로 처리
+        modelingStatus = 'completed';
+      } else {
+        state.transferPending = true;
+        state.items = [];
+        renderCounts();
+        renderList();
+        setStatus("탐지결과 옮기는중.. 잠시만 기다려주세요.");
+        await broadcastHighlights();
+        return;
+      }
+    } else {
+      state.modelProgress = null;
     }
 
     // 모델 결과를 AnalysisItem 형식으로 변환
-    // 중요: 모델링이 완료된 경우에만 결과를 표시
     if (modelingStatus === 'completed') {
       if (Array.isArray(modelResults) && modelResults.length > 0) {
         // 다크패턴만 필터링하고 표시
@@ -392,11 +423,12 @@ function renderList() {
     if (state.modelProgress && state.modelProgress.status === 'processing') {
       const { current, total } = state.modelProgress;
       const percent = total > 0 ? Math.round((current / total) * 100) : 0;
-      
+      const transferPending = state.transferPending || percent === 100;
+
       if (el.emptyMessage) {
-        el.emptyMessage.textContent = "모델 분석 진행 중입니다...";
+        el.emptyMessage.textContent = transferPending ? "탐지결과 옮기는중.." : "모델 분석 진행 중입니다...";
       }
-      
+
       if (el.progressInfo) {
         el.progressInfo.style.display = "block";
         el.progressInfo.innerHTML = `
@@ -411,7 +443,7 @@ function renderList() {
                 </div>
               </div>
               <div style="font-size: 12px; color: #6b7280; text-align: center;">
-                ${percent}% 완료
+                ${transferPending ? "결과를 준비하고 있습니다…" : `${percent}% 완료`}
               </div>
             </div>
           </div>
@@ -576,6 +608,7 @@ async function showModelProgress(progress) {
   const current = prog?.current || 0;
   const total = prog?.total || 0;
   const percent = total > 0 ? Math.round((current / total) * 100) : 0;
+  const transferPending = status === 'processing' && percent === 100;
 
   // 상태 업데이트
   state.modelProgress = {
@@ -583,10 +616,13 @@ async function showModelProgress(progress) {
     current,
     total
   };
+  state.transferPending = transferPending;
 
   // 섹션 제목과 부제목 업데이트
   if (el.sectionTitle) {
-    if (status === 'processing') {
+    if (transferPending) {
+      el.sectionTitle.textContent = '분석 결과 준비 중입니다';
+    } else if (status === 'processing') {
       el.sectionTitle.textContent = '모델이 분석 중입니다..';
     } else if (status === 'completed') {
       el.sectionTitle.textContent = '분석 결과';
@@ -598,7 +634,9 @@ async function showModelProgress(progress) {
   }
 
   if (el.sectionSubtitle) {
-    if (status === 'processing') {
+    if (transferPending) {
+      el.sectionSubtitle.textContent = '탐지결과 옮기는중..';
+    } else if (status === 'processing') {
       el.sectionSubtitle.textContent = `진행 중 (${current}/${total})`;
     } else if (status === 'completed') {
       el.sectionSubtitle.textContent = '다크패턴이 탐지된 문장입니다';
@@ -621,7 +659,15 @@ async function showModelProgress(progress) {
     renderCounts();
     renderList();
     await broadcastHighlights();
+    if (transferPending) {
+      try {
+        await fetchDocForAnalysis();
+      } catch (err) {
+        console.warn("전송 대기 중 결과 갱신 실패:", err);
+      }
+    }
   } else if (status === 'completed') {
+    state.transferPending = false;
     // 상태 초기화
     state.modelProgress = null;
     state.items = [];
@@ -635,6 +681,7 @@ async function showModelProgress(progress) {
       progressInterval = null;
     }
   } else if (status === 'failed') {
+    state.transferPending = false;
     // 상태 초기화
     state.modelProgress = null;
     await broadcastHighlights();
@@ -646,6 +693,7 @@ async function showModelProgress(progress) {
     // pending 상태 - 아무것도 표시하지 않음
     state.items = [];
     state.modelProgress = null;
+    state.transferPending = false;
     renderCounts();
     renderList();
     await broadcastHighlights();

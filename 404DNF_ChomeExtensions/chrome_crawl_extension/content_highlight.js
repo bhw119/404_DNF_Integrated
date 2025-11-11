@@ -157,6 +157,85 @@
     return ch.toLowerCase();
   }
 
+  function tokenizeText(str) {
+    return (
+      String(str || "")
+        .toLowerCase()
+        .match(/[a-z0-9가-힣]+/g) || []
+    );
+  }
+
+  function computeOverlapScore(blockText, queryTokens) {
+    if (!queryTokens.length) return 0;
+    const blockTokens = tokenizeText(blockText);
+    if (!blockTokens.length) return 0;
+
+    const blockSet = new Set(blockTokens);
+    let matched = 0;
+    for (const token of queryTokens) {
+      if (blockSet.has(token)) matched += 1;
+    }
+
+    const coverage = matched / queryTokens.length;
+    const density = matched / blockTokens.length;
+    const sizeSimilarity = 1 / (1 + Math.abs(blockTokens.length - queryTokens.length));
+
+    return coverage * 0.7 + density * 0.2 + sizeSimilarity * 0.1;
+  }
+
+  function findMeaningfulAncestor(node) {
+    let current = node?.parentElement;
+    let depth = 0;
+    let best = null;
+    while (current && depth < 6) {
+      const text = (current.innerText || "").trim();
+      const len = text.length;
+      if (len >= 10 && len <= 1200) {
+        best = current;
+        break;
+      }
+      if (!best && len > 0) {
+        best = current;
+      }
+      depth += 1;
+      current = current.parentElement;
+    }
+    return best || node?.parentElement || null;
+  }
+
+  function findBestNodeMatch(nodes, query) {
+    const baseRegex = buildLooseRegex(query);
+    if (!baseRegex) return null;
+    const queryTokens = tokenizeText(query);
+    let best = null;
+
+    for (const node of nodes) {
+      const value = node?.nodeValue;
+      if (!value || !value.trim()) continue;
+
+      const regex = new RegExp(baseRegex.source, baseRegex.flags);
+      const match = regex.exec(value);
+      if (!match) continue;
+
+      const start = match.index;
+      const end = match.index + match[0].length;
+      const ancestor = findMeaningfulAncestor(node);
+      const ancestorText = ancestor?.innerText || value;
+      const score = computeOverlapScore(ancestorText, queryTokens);
+      const tieBreaker = Math.abs((ancestorText || "").length - query.length);
+
+      if (
+        !best ||
+        score > best.score ||
+        (score === best.score && tieBreaker < best.tieBreaker)
+      ) {
+        best = { node, start, end, score, tieBreaker, ancestor };
+      }
+    }
+
+    return best;
+  }
+
   function findNormalizedMatch(text, normalizedQuery) {
     if (!text) return null;
     const cleanQuery = normalizeForLooseMatch(normalizedQuery);
@@ -223,39 +302,6 @@
 
     parent.replaceChild(fragment, textNode);
     return { mark, tail };
-  }
-
-  function markMatchesInNode(textNode, query, severity) {
-    const regex = buildLooseRegex(query);
-    if (!regex) return [];
-    const className = CLASS_BY_SEVERITY[severity] || CLASS_BY_SEVERITY.default;
-
-    const marks = [];
-    let node = textNode;
-
-    while (node && node.nodeType === Node.TEXT_NODE) {
-      const value = node.nodeValue || "";
-      const match = regex.exec(value);
-      if (!match) break;
-
-      const range = document.createRange();
-      range.setStart(node, match.index);
-      range.setEnd(node, match.index + match[0].length);
-
-      const mark = document.createElement("mark");
-      mark.className = className;
-      mark.dataset.dpdText = query;
-      if (severity) mark.dataset.dpdSeverity = severity;
-
-      range.surroundContents(mark);
-      marks.push(mark);
-
-      const next = mark.nextSibling;
-      if (!next || next.nodeType !== Node.TEXT_NODE) break;
-      node = next;
-    }
-
-    return marks;
   }
 
   function highlightAcrossNodes(nodes, query, severity) {
@@ -349,35 +395,32 @@
 
     const nodes = getTextNodes(document);
     let first = null;
+    const className = CLASS_BY_SEVERITY[severity] || CLASS_BY_SEVERITY.default;
 
-    for (const node of nodes) {
-      const marks = markMatchesInNode(node, target, severity);
-      if (marks.length > 0) {
-        if (!first) first = marks[0];
+    const bestMatch = findBestNodeMatch(nodes, target);
+    if (bestMatch) {
+      const { mark } = wrapRange(bestMatch.node, bestMatch.start, bestMatch.end, className, target, severity);
+      if (mark) {
+        first = mark;
         if (log) {
-          marks.forEach((mark, idx) => {
-            const rect = mark.getBoundingClientRect();
-            console.log(
-              "[DPD][Highlight] 위치보기 매치",
-              {
-                index: idx,
-                text: target,
-                severity,
-                rect: {
-                  top: rect.top,
-                  left: rect.left,
-                  width: rect.width,
-                  height: rect.height,
-                  bottom: rect.bottom,
-                  right: rect.right,
-                },
-                domPath: getDomPath(mark.parentElement || mark),
-              }
-            );
-            console.log("[DPD][Highlight] 위치보기 요소 HTML", {
-              index: idx,
-              snippet: getHtmlSnippet(mark.parentElement || mark),
-            });
+          const rect = mark.getBoundingClientRect();
+          console.log("[DPD][Highlight] 위치보기 매치", {
+            index: 0,
+            text: target,
+            severity,
+            rect: {
+              top: rect.top,
+              left: rect.left,
+              width: rect.width,
+              height: rect.height,
+              bottom: rect.bottom,
+              right: rect.right,
+            },
+            domPath: getDomPath(bestMatch.ancestor || mark.parentElement || mark),
+          });
+          console.log("[DPD][Highlight] 위치보기 요소 HTML", {
+            index: 0,
+            snippet: getHtmlSnippet(bestMatch.ancestor || mark.parentElement || mark),
           });
         }
       }
@@ -437,7 +480,8 @@
         const sentenceSegments = splitByPunctuation(target).filter((seg) => seg.length >= 2);
         if (sentenceSegments.length > 1) {
           let success = false;
-          sentenceSegments.forEach((seg, idx) => {
+          for (let idx = 0; idx < sentenceSegments.length; idx++) {
+            const seg = sentenceSegments[idx];
             const segFound = highlightText(
               seg,
               {
@@ -448,14 +492,18 @@
               },
               { disableSegments: true }
             );
-            if (segFound) success = true;
-          });
+            if (segFound) {
+              success = true;
+              break;
+            }
+          }
           if (success) return true;
         }
         const wordSegments = splitIntoWords(target).filter((seg) => seg.length >= 1);
         if (wordSegments.length > 1) {
           let success = false;
-          wordSegments.forEach((seg, idx) => {
+          for (let idx = 0; idx < wordSegments.length; idx++) {
+            const seg = wordSegments[idx];
             const segFound = highlightText(
               seg,
               {
@@ -466,8 +514,11 @@
               },
               { disableSegments: true }
             );
-            if (segFound) success = true;
-          });
+            if (segFound) {
+              success = true;
+              break;
+            }
+          }
           if (success) return true;
         }
       }
