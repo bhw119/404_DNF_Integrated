@@ -571,8 +571,10 @@ function assembleOutput(tabInfo, frameResults){
 }
 
 /* ===== 서버 전송 ===== */
-const API_BASE = "http://localhost:8000";
-const API_KEY  = "";
+const ENV_API_BASE = (typeof process !== "undefined" && typeof process.env !== "undefined" && process.env.API_BASE) || "";
+const ENV_API_KEY = (typeof process !== "undefined" && typeof process.env !== "undefined" && process.env.API_KEY) || "";
+const API_BASE = ENV_API_BASE || "http://localhost:8000";
+const API_KEY  = ENV_API_KEY || "";
 
 async function sendToApi(payload){
   const headers = { "Content-Type": "application/json" };

@@ -2,16 +2,16 @@
   const STYLE_ID = "dpd-highlight-style";
   const BASE_CLASS = "dpd-highlight-mark";
   const CLASS_BY_SEVERITY = {
-    high: `${BASE_CLASS} ${BASE_CLASS}--high`,
-    mid: `${BASE_CLASS} ${BASE_CLASS}--mid`,
-    low: `${BASE_CLASS} ${BASE_CLASS}--low`,
+    high: ` ${BASE_CLASS}--high`,
+    mid: `${BASE_CLASS}--mid`,
+    low: ` ${BASE_CLASS}--low`,
     default: BASE_CLASS,
   };
   const ELEMENT_BASE_CLASS = "dpd-highlight-target";
   const ELEMENT_CLASS_BY_SEVERITY = {
-    high: `${ELEMENT_BASE_CLASS} ${ELEMENT_BASE_CLASS}--high`,
-    mid: `${ELEMENT_BASE_CLASS} ${ELEMENT_BASE_CLASS}--mid`,
-    low: `${ELEMENT_BASE_CLASS} ${ELEMENT_BASE_CLASS}--low`,
+    high: `${ELEMENT_BASE_CLASS}--high`,
+    mid: ` ${ELEMENT_BASE_CLASS}--mid`,
+    low: `${ELEMENT_BASE_CLASS}--low`,
     default: ELEMENT_BASE_CLASS,
   };
   const ELEMENT_CLASS_VARIANTS = [
@@ -28,12 +28,6 @@
     style.id = STYLE_ID;
     style.textContent = `
       .${BASE_CLASS} {
-        background: rgba(250, 204, 21, 0.45);
-        outline: 2px solid rgba(245, 158, 11, .85);
-        border-radius: 3px;
-        padding: 0 .18em;
-        box-shadow: 0 0 0 1px rgba(255,255,255,.6);
-        transition: background .18s ease, outline-color .18s ease;
       }
       .${BASE_CLASS}--high {
         background: rgba(239, 68, 68, 0.28);
@@ -56,17 +50,23 @@
       }
       .${ELEMENT_BASE_CLASS} {
         box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.65), 0 0 0 6px rgba(255, 255, 255, 0.55);
-        border-radius: 6px;
+        border-radius: 10px;
         transition: box-shadow .2s ease;
       }
       .${ELEMENT_BASE_CLASS}--high {
         box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.75), 0 0 0 7px rgba(255, 255, 255, 0.6);
+        background: rgba(239, 68, 68, 0.18);
+        border-radius: 10px;
       }
       .${ELEMENT_BASE_CLASS}--mid {
         box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.75), 0 0 0 7px rgba(255, 255, 255, 0.6);
+        background: rgba(245, 158, 11, 0.18);
+        border-radius: 10px;
       }
       .${ELEMENT_BASE_CLASS}--low {
         box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.75), 0 0 0 7px rgba(255, 255, 255, 0.6);
+        background: rgba(34, 197, 94, 0.18);
+        border-radius: 10px;
       }
       .${ELEMENT_BASE_CLASS}.blink {
         animation: dpd-element-blink 1s ease 0s 2;
