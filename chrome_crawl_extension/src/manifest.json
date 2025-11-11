@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "404 DNF",
+  "version": "2.0.0",
+  "description": "다크패턴 탐지 졸업 프로젝트 크롬 확장 프로그램 (React + Vite)",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "downloads",
+    "clipboardWrite",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://localhost:8000/*",
+    "https://translate.googleapis.com/*"
+  ],
+  "icons": {
+    "16": "assets/icons/logo.png",
+    "32": "assets/icons/logo.png",
+    "48": "assets/icons/logo.png",
+    "128": "assets/icons/logo.png"
+  },
+  "action": {
+    "default_popup": "src/pages/popup/index.html",
+    "default_title": "텍스트/URL 추출",
+    "default_icon": {
+      "16": "assets/icons/logo.png",
+      "32": "assets/icons/logo.png"
+    }
+  },
+  "side_panel": {
+    "default_path": "src/pages/sidepanel_summary/index.html"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["assets/*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content/content.ts", "src/content/highlight.ts"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
