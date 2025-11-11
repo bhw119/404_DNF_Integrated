@@ -13,6 +13,7 @@ const API_BASE = "http://localhost:8000";
 const qs = new URLSearchParams(location.search);
 const docIdParam = qs.get("doc");
 let currentDocId = docIdParam || null;
+let lastKnownTabId = null;
 
 const SUMMARY_HTML = "sidepanel_summary.html";
 const LAW_HTML = "sidepanel_law.html";
@@ -54,8 +55,26 @@ const state = {
   transferPending: false,
 };
 
+function rememberTab(tab) {
+  if (tab?.id !== undefined && tab.id !== chrome.tabs.TAB_ID_NONE) {
+    lastKnownTabId = tab.id;
+  }
+}
+
+function resolveTabId(tab) {
+  if (tab?.id !== undefined && tab.id !== chrome.tabs.TAB_ID_NONE) {
+    lastKnownTabId = tab.id;
+    return tab.id;
+  }
+  if (typeof lastKnownTabId === "number") {
+    return lastKnownTabId;
+  }
+  return null;
+}
+
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  rememberTab(tab);
   return tab;
 }
 
@@ -138,8 +157,9 @@ async function broadcastHighlights() {
       return;
     }
 
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const targetTabId = resolveTabId(tab);
+    if (!targetTabId) {
       console.warn("[DPD][Sidepanel] 하이라이트 전송 실패: 활성 탭 없음");
       return;
     }
@@ -147,7 +167,7 @@ async function broadcastHighlights() {
     const message = { type: "bulk-highlight", items: payload };
 
     try {
-      await chrome.tabs.sendMessage(tab.id, message);
+      await chrome.tabs.sendMessage(targetTabId, message);
       console.log("[DPD][Sidepanel] bulk-highlight 전송 완료", { count: payload.length });
     } catch (err) {
       const msg = String(err?.message || err || "");
@@ -155,10 +175,10 @@ async function broadcastHighlights() {
       if (msg.includes("Receiving end does not exist")) {
         try {
           await chrome.scripting.executeScript({
-            target: { tabId: tab.id, allFrames: true },
+            target: { tabId: targetTabId, allFrames: true },
             files: ["content_highlight.js"],
           });
-          await chrome.tabs.sendMessage(tab.id, message);
+          await chrome.tabs.sendMessage(targetTabId, message);
           console.log("[DPD][Sidepanel] bulk-highlight 재전송 성공");
         } catch (injectErr) {
           console.warn("[DPD][Sidepanel] bulk-highlight 재전송 실패", injectErr);
@@ -530,13 +550,14 @@ function renderList() {
             structuredMeta: it.structuredMeta || it.meta?.structuredMeta || null,
           }
         };
-        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (!tab?.id) {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        const targetTabId = resolveTabId(tab);
+        if (!targetTabId) {
           console.warn("[DPD][Sidepanel] 활성 탭을 찾지 못했습니다.");
           return;
         }
-        console.log("[DPD][Sidepanel] 위치보기 메시지 전송", { tabId: tab.id, payloadLength: (msg.payload.text || "").length });
-        const response = await chrome.tabs.sendMessage(tab.id, msg).catch((err) => {
+        console.log("[DPD][Sidepanel] 위치보기 메시지 전송", { tabId: targetTabId, payloadLength: (msg.payload.text || "").length });
+        const response = await chrome.tabs.sendMessage(targetTabId, msg).catch((err) => {
           console.warn("[DPD][Sidepanel] 위치보기 전송 실패", err);
           return null;
         });
@@ -607,8 +628,9 @@ if (el.tabLaw) {
 /** --------- 웹사이트 고정 이동 ---------- */
 async function jumpToKw() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) await chrome.tabs.update(tab.id, { url: "https://www.kw.ac.kr" });
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const targetTabId = resolveTabId(tab);
+    if (targetTabId) await chrome.tabs.update(targetTabId, { url: "https://www.kw.ac.kr" });
   } catch (e) {
     console.warn("탭 이동 실패:", e);
   }
