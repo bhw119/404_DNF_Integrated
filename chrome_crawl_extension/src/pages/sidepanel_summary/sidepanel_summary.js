@@ -59,12 +59,17 @@ const el = {
 };
 
 // 접근성용 상태 텍스트
-function setStatus(t) { if (el.status) el.status.textContent = t; }
+function setStatus(t) {
+  if (el.status) el.status.textContent = t;
+}
 
 async function fetchDocById(id) {
   if (!id) return null;
   try {
-    const res = await fetch(`${API_BASE}/doc/${encodeURIComponent(id)}?t=${Date.now()}`, { cache: "no-store" });
+    const res = await fetch(
+      `${API_BASE}/doc/${encodeURIComponent(id)}?t=${Date.now()}`,
+      { cache: "no-store" }
+    );
     if (!res.ok) return null;
     const payload = await res.json();
     return payload?.doc || null;
@@ -76,7 +81,9 @@ async function fetchDocById(id) {
 
 async function fetchLatestDoc() {
   try {
-    const res = await fetch(`${API_BASE}/doc/latest?t=${Date.now()}`, { cache: "no-store" });
+    const res = await fetch(`${API_BASE}/doc/latest?t=${Date.now()}`, {
+      cache: "no-store",
+    });
     if (!res.ok) return null;
     const payload = await res.json();
     return payload?.doc || null;
@@ -96,13 +103,13 @@ function riskLabel(percent) {
 
 // 라벨별 테마 색상 (rgb 문자열)
 const RISK_THEME_RGB = {
-  "안전": "16,185,129",  // #10B981
-  "주의": "99,102,241",  // #6366F1
-  "경고": "245,158,11",  // #F59E0B
-  "위험": "239,68,68",   // #EF4444
+  안전: "16,185,129", // #10B981
+  주의: "99,102,241", // #6366F1
+  경고: "245,158,11", // #F59E0B
+  위험: "239,68,68", // #EF4444
 };
 
-// 라벨에 맞게 CSS 변수(--risk-rgb) 적용 
+// 라벨에 맞게 CSS 변수(--risk-rgb) 적용
 function applyRiskTheme(label) {
   const rgb = RISK_THEME_RGB[label] || RISK_THEME_RGB["위험"];
   document.documentElement.style.setProperty("--risk-rgb", rgb);
@@ -123,7 +130,9 @@ function normalizeHexObjectId(v) {
 }
 
 // truthy 1/true/"1" 허용
-function toBoolDark(v) { return v === true || v === 1 || v === "1"; }
+function toBoolDark(v) {
+  return v === true || v === 1 || v === "1";
+}
 
 /* 중앙 원 텍스트 완전 중앙 정렬 */
 (function injectCenteringCSS() {
@@ -151,7 +160,9 @@ async function fetchRiskPercentFromModel(_docId) {
         return Math.max(0, Math.min(100, Math.round(j.percent)));
       }
     }
-  } catch (_) { /* ignore */ }
+  } catch (_) {
+    /* ignore */
+  }
 
   // 2) 폴백: 상세 배열에서 계산 (다크패턴수/전체 * 100)
   const url2 = `${API_BASE}/model?id=${encodeURIComponent(docId)}&t=${Date.now()}`;
@@ -160,9 +171,13 @@ async function fetchRiskPercentFromModel(_docId) {
   const data = await res.json();
 
   if (Array.isArray(data)) {
-    const filtered = data.filter(row => normalizeHexObjectId(row?.id) === docId);
+    const filtered = data.filter(
+      (row) => normalizeHexObjectId(row?.id) === docId
+    );
     const total = filtered.length;
-    const dark = filtered.filter(row => toBoolDark(row?.is_darkpattern)).length;
+    const dark = filtered.filter((row) =>
+      toBoolDark(row?.is_darkpattern)
+    ).length;
     return total > 0 ? Math.round((dark / total) * 100) : 0;
   }
   if (data && typeof data === "object") {
@@ -181,11 +196,14 @@ async function fetchBucketsFromModel(_docId) {
   if (!res.ok) throw new Error(`model API ${res.status}`);
   const data = await res.json();
 
-  let high = 0, mid = 0, low = 0, none = 0;
-  let total = 0;  // 전체 개수 계산
+  let high = 0,
+    mid = 0,
+    low = 0,
+    none = 0;
+  let total = 0; // 전체 개수 계산
 
   if (Array.isArray(data)) {
-    const rows = data.filter(row => normalizeHexObjectId(row?.id) === docId);
+    const rows = data.filter((row) => normalizeHexObjectId(row?.id) === docId);
     total = rows.length;
 
     for (const row of rows) {
@@ -206,12 +224,15 @@ async function fetchBucketsFromModel(_docId) {
 
 /* ──[4] TOP3 유형 집계 ─────────────────────────────────────────────────── */
 const PREDICATE_DESC_MAP = {
-  "Urgency": "제한된 시간 내에 행동을 강요함으로써 사용자가 충분한 정보 없이 의사결정을 내리게 함",
-  "Misdirection": "시각적 강조, 언어트릭 등으로 사용자의 관심을 다른 곳으로 돌려 의도와 다른 행동을 유도",
-  "Social Proof": "타인의 행동이나 평가를 조작하여 다수가 선택했다는 착각을 유도함",
-  "Scarcity": "상품이 곧 없어질 것 같은 인상을 주어 충동구매를 유도",
+  Urgency:
+    "제한된 시간 내에 행동을 강요함으로써 사용자가 충분한 정보 없이 의사결정을 내리게 함",
+  Misdirection:
+    "시각적 강조, 언어트릭 등으로 사용자의 관심을 다른 곳으로 돌려 의도와 다른 행동을 유도",
+  "Social Proof":
+    "타인의 행동이나 평가를 조작하여 다수가 선택했다는 착각을 유도함",
+  Scarcity: "상품이 곧 없어질 것 같은 인상을 주어 충동구매를 유도",
   "Activity Notifications": "사용자의 활동을 알림으로써 관심을 유도",
-  "Confirmshaming": "사용자가 특정 선택을 하지 않으면 부정적으로 묘사함",
+  Confirmshaming: "사용자가 특정 선택을 하지 않으면 부정적으로 묘사함",
   "Countdown Timers": "시간 제한을 두어 긴박감을 조성",
   "High-demand Messages": "높은 수요를 강조하여 구매를 유도",
   "Limited-time Messages": "제한된 시간을 강조하여 긴급 구매를 유도",
@@ -232,7 +253,7 @@ async function fetchTopTypesFromModel(_docId) {
 
   if (Array.isArray(data)) {
     // 모든 행을 집계 (다크패턴 여부와 관계없이 predicate 기준으로)
-    const rows = data.filter(row => normalizeHexObjectId(row?.id) === docId);
+    const rows = data.filter((row) => normalizeHexObjectId(row?.id) === docId);
     for (const row of rows) {
       // predicate 값을 사용 (type이 아니라 predicate)
       const predicate = String(row?.predicate ?? row?.type ?? "Unknown").trim();
@@ -246,13 +267,13 @@ async function fetchTopTypesFromModel(_docId) {
   // 내림차순 정렬 후 상위 3개
   const sorted = Array.from(counter.entries())
     .filter(([predicate]) => predicate !== "Not Dark Pattern")
-    .sort((a,b) => b[1] - a[1])
+    .sort((a, b) => b[1] - a[1])
     .slice(0, 3)
-    .map(([predicate, count]) => ({ 
-      type: predicate,  // 호환성을 위해 type 필드 유지
-      predicate: predicate,  // 명시적으로 predicate 필드 추가
-      count, 
-      desc: PREDICATE_DESC_MAP[predicate] ?? "설명 없음" 
+    .map(([predicate, count]) => ({
+      type: predicate, // 호환성을 위해 type 필드 유지
+      predicate: predicate, // 명시적으로 predicate 필드 추가
+      count,
+      desc: PREDICATE_DESC_MAP[predicate] ?? "설명 없음",
     }));
 
   return sorted; // [{type, predicate, count, desc}, ...]
@@ -265,10 +286,10 @@ function bindTop3(sorted) {
     const predicateRaw = item?.predicate || item?.type || "";
     const isNotDark = predicateRaw === "Not Dark Pattern";
     const predicate = isNotDark ? "" : predicateRaw;
-    const desc = !isNotDark ? (item?.desc || "설명 없음") : "";
-    const count = !isNotDark ? (item?.count || 0) : 0;
+    const desc = !isNotDark ? item?.desc || "설명 없음" : "";
+    const count = !isNotDark ? item?.count || 0 : 0;
     const hasData = Boolean(predicate);
-    
+
     if (i === 0) {
       el.top1Name.textContent = hasData ? predicate : "-";
       el.top1Desc.textContent = hasData ? desc : "-";
@@ -304,7 +325,9 @@ async function fetchDoc({ bustCache = false } = {}) {
     if (currentDocId) {
       doc = await fetchDocById(currentDocId);
       if (!doc) {
-        console.warn(`[DPD][Summary] 지정된 문서(${currentDocId})를 찾지 못했습니다. 최신 문서를 사용합니다.`);
+        console.warn(
+          `[DPD][Summary] 지정된 문서(${currentDocId})를 찾지 못했습니다. 최신 문서를 사용합니다.`
+        );
       }
     }
 
@@ -322,10 +345,16 @@ async function fetchDoc({ bustCache = false } = {}) {
 
     // 메타/요약 바인딩
     if (el.docId) el.docId.textContent = d._id;
-    if (el.pageMeta) el.pageMeta.textContent = `${d.tabTitle || "(제목 없음)"} — ${d.tabUrl}`;
-    if (el.framesCount) el.framesCount.textContent = String(d.framesCollected ?? (d.frames?.length || 0));
+    if (el.pageMeta)
+      el.pageMeta.textContent = `${d.tabTitle || "(제목 없음)"} — ${d.tabUrl}`;
+    if (el.framesCount)
+      el.framesCount.textContent = String(
+        d.framesCollected ?? (d.frames?.length || 0)
+      );
     if (el.framesList) el.framesList.textContent = (d.frames || []).join("\n");
-    if (el.textPreview) el.textPreview.textContent = (d.fullText || "").slice(0, 1000) || "(본문 없음)";
+    if (el.textPreview)
+      el.textPreview.textContent =
+        (d.fullText || "").slice(0, 1000) || "(본문 없음)";
 
     // 분석 버킷 집계 (먼저 실행하여 total을 얻음)
     let buckets = { high: 0, mid: 0, low: 0, none: 0, total: 0 };
@@ -335,14 +364,16 @@ async function fetchDoc({ bustCache = false } = {}) {
       if (el.midCount) el.midCount.textContent = String(buckets.mid);
       if (el.lowCount) el.lowCount.textContent = String(buckets.low);
       if (el.noneCount) el.noneCount.textContent = String(buckets.none);
-      
+
       // 전체 개수 동적 업데이트
       const total = buckets.total || 0;
       if (el.highOutOf) el.highOutOf.textContent = `/${total}`;
       if (el.midOutOf) el.midOutOf.textContent = `/${total}`;
       if (el.lowOutOf) el.lowOutOf.textContent = `/${total}`;
       if (el.noneOutOf) el.noneOutOf.textContent = `/${total}`;
-    } catch (err) { console.warn("버킷 집계 실패:", err); }
+    } catch (err) {
+      console.warn("버킷 집계 실패:", err);
+    }
 
     // 위험지수 계산 (다크패턴수/전체 * 100)
     let percent = 0;
@@ -357,8 +388,12 @@ async function fetchDoc({ bustCache = false } = {}) {
         percent = await fetchRiskPercentFromModel(d._id);
       }
     } catch (err) {
-      console.warn("model 퍼센트 계산 실패 → d.overallRiskPercent 폴백 시도:", err);
-      if (typeof d.overallRiskPercent === "number") percent = d.overallRiskPercent;
+      console.warn(
+        "model 퍼센트 계산 실패 → d.overallRiskPercent 폴백 시도:",
+        err
+      );
+      if (typeof d.overallRiskPercent === "number")
+        percent = d.overallRiskPercent;
     }
     percent = Math.max(0, Math.min(100, Math.round(percent)));
 
@@ -387,10 +422,16 @@ async function fetchDoc({ bustCache = false } = {}) {
 }
 
 /* ──[6] 상단 아이콘 동작 ──────────────────────────────────────────────── */
-el.actionRefresh?.addEventListener("click", () => { fetchDoc({ bustCache: true }); });
+el.actionRefresh?.addEventListener("click", () => {
+  fetchDoc({ bustCache: true });
+});
 el.actionClose?.addEventListener("click", () => {
-  try { chrome.runtime.sendMessage?.({ type: "close-sidepanel" }); } catch (_) {}
-  try { window.close(); } catch (_) {}
+  try {
+    chrome.runtime.sendMessage?.({ type: "close-sidepanel" });
+  } catch (_) {}
+  try {
+    window.close();
+  } catch (_) {}
 });
 
 /* ──[7] 탭 내비게이션 ─────────────────────────────────────────────────── */
@@ -419,4 +460,4 @@ document.querySelectorAll(".tab").forEach((btn) => {
 });
 
 /* ──[8] 초기 로드 ─────────────────────────────────────────────────────── */
-fetchDoc();  // 최초 1회 로드
+fetchDoc(); // 최초 1회 로드
