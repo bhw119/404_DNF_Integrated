@@ -1,13 +1,64 @@
 <!doctype html>
-<html>
+<html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>404 DNF - Popup</title>
+    <title>페이지 크롤링</title>
+    <style>
+      body {
+        font-family:
+          system-ui,
+          -apple-system,
+          Segoe UI,
+          Roboto,
+          Helvetica,
+          Arial;
+        margin: 16px;
+        width: 320px;
+      }
+      h1 {
+        font-size: 16px;
+        margin: 0 0 12px;
+      }
+      button {
+        width: 100%;
+        padding: 10px 12px;
+        border: none;
+        border-radius: 10px;
+        font-size: 14px;
+        cursor: pointer;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.1);
+      }
+      #extractBtn {
+        background: #111827;
+        color: white;
+      }
+      #status {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #374151;
+        white-space: pre-line;
+      }
+      .small {
+        font-size: 11px;
+        color: #6b7280;
+        margin-top: 8px;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="./main.tsx"></script>
+    <h1>다크패턴 분석하기</h1>
+    <button id="extractBtn">추출 & 저장</button>
+    <button
+      id="viewAnalysisBtn"
+      style="display: none; background: #667eea; color: white; margin-top: 8px"
+    >
+      📊 분석 보기
+    </button>
+    <div id="status"></div>
+    <div class="small">
+      ※ URL 목록은 저장하지 않습니다. (상단의 탭 URL/제목은 포함)<br />※ 한글
+      텍스트는 자동으로 영어로 번역됩니다.
+    </div>
+    <script type="module" src="./popup.js"></script>
   </body>
-  </html>
-
+</html>
