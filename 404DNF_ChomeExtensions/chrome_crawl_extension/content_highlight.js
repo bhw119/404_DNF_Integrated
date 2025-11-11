@@ -1,35 +1,52 @@
 (() => {
-  const HIGHLIGHT_CLASS = "dpd-highlight-mark";
   const STYLE_ID = "dpd-highlight-style";
+  const BASE_CLASS = "dpd-highlight-mark";
+  const CLASS_BY_SEVERITY = {
+    high: `${BASE_CLASS} ${BASE_CLASS}--high`,
+    mid: `${BASE_CLASS} ${BASE_CLASS}--mid`,
+    low: `${BASE_CLASS} ${BASE_CLASS}--low`,
+    default: BASE_CLASS,
+  };
 
   function ensureStyle() {
     if (document.getElementById(STYLE_ID)) return;
     const style = document.createElement("style");
     style.id = STYLE_ID;
     style.textContent = `
-      .${HIGHLIGHT_CLASS} {
-        background: rgba(250, 204, 21, 0.6);
-        outline: 2px solid rgba(245, 158, 11, .9);
+      .${BASE_CLASS} {
+        background: rgba(250, 204, 21, 0.45);
+        outline: 2px solid rgba(245, 158, 11, .85);
         border-radius: 3px;
-        padding: 0 .15em;
-        box-shadow: 0 0 0 2px rgba(255,255,255,.6);
-        transition: background .2s ease, outline-color .2s ease;
+        padding: 0 .18em;
+        box-shadow: 0 0 0 1px rgba(255,255,255,.6);
+        transition: background .18s ease, outline-color .18s ease;
       }
-      .${HIGHLIGHT_CLASS}.blink {
+      .${BASE_CLASS}--high {
+        background: rgba(239, 68, 68, 0.28);
+        outline-color: rgba(220, 38, 38, 0.95);
+      }
+      .${BASE_CLASS}--mid {
+        background: rgba(245, 158, 11, 0.32);
+        outline-color: rgba(217, 119, 6, 0.95);
+      }
+      .${BASE_CLASS}--low {
+        background: rgba(34, 197, 94, 0.28);
+        outline-color: rgba(22, 163, 74, 0.9);
+      }
+      .${BASE_CLASS}.blink {
         animation: dpd-blink 0.9s ease 0s 2;
       }
       @keyframes dpd-blink {
-        0%, 100% { outline-color: rgba(245, 158, 11, .9); }
-        50%      { outline-color: rgba(245, 158, 11, .0); }
+        0%, 100% { outline-offset: 0; }
+        50%      { outline-offset: 3px; }
       }
     `;
     document.documentElement.appendChild(style);
   }
 
   function clearHighlights(root = document) {
-    const nodes = root.querySelectorAll?.(`.${HIGHLIGHT_CLASS}`);
-    if (!nodes?.length) return;
-    nodes.forEach((el) => {
+    const nodes = root.querySelectorAll?.(`.${BASE_CLASS}`);
+    nodes?.forEach((el) => {
       const parent = el.parentNode;
       if (!parent) return;
       while (el.firstChild) parent.insertBefore(el.firstChild, el);
@@ -55,70 +72,408 @@
         }
       }
     );
-    const result = [];
+    const nodes = [];
     let current;
-    while ((current = walker.nextNode())) result.push(current);
-    return result;
+    while ((current = walker.nextNode())) nodes.push(current);
+    return nodes;
   }
 
-  function highlightInTextNode(textNode, queryLower, severity) {
+  function escapeRegex(str) {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  function buildLooseRegex(query) {
+    const cleaned = String(query || "")
+      .replace(/\u00A0/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!cleaned) return null;
+
+    // 단어 사이에 다른 문자가 끼어도 찾을 수 있도록, 각 문자 사이에 임의 문자가 들어갈 수 있게 허용
+    const chars = Array.from(cleaned);
+    const pattern = chars
+      .map((ch) => escapeRegex(ch))
+      .join("[\\s\\u200B\\u200C\\uFEFF\\u00A0\\W]*");
+    try {
+      return new RegExp(pattern, "i");
+    } catch {
+      return null;
+    }
+  }
+
+  function getDomPath(element, depthLimit = 8) {
+    if (!element || element.nodeType !== Node.ELEMENT_NODE) return "";
+    const parts = [];
+    let node = element;
+    let depth = 0;
+    while (node && node.nodeType === Node.ELEMENT_NODE && depth < depthLimit) {
+      let part = node.tagName.toLowerCase();
+      if (node.id) {
+        part += `#${node.id}`;
+      } else {
+        const className = (node.className || "")
+          .toString()
+          .trim()
+          .split(/\s+/)
+          .filter(Boolean)
+          .slice(0, 2)
+          .join(".");
+        if (className) {
+          part += `.${className}`;
+        }
+      }
+      if (node.parentElement) {
+        const siblings = Array.from(node.parentElement.children).filter(
+          (child) => child.tagName === node.tagName
+        );
+        if (siblings.length > 1) {
+          const index = siblings.indexOf(node);
+          part += `:nth-of-type(${index + 1})`;
+        }
+      }
+      parts.push(part);
+      node = node.parentElement;
+      depth += 1;
+    }
+    return parts.reverse().join(" > ");
+  }
+
+  function getHtmlSnippet(element, maxLength = 220) {
+    if (!element) return "";
+    const outer = element.outerHTML || "";
+    if (!outer) return "";
+    const singleLine = outer.replace(/\s+/g, " ").trim();
+    if (singleLine.length <= maxLength) return singleLine;
+    return `${singleLine.slice(0, maxLength)}…`;
+  }
+
+  function normalizeForLooseMatch(str) {
+    return String(str || "")
+      .replace(/[\s\u200B\u200C\uFEFF\u00A0]/g, "")
+      .trim();
+  }
+
+  function normalizeChar(ch) {
+    return ch.toLowerCase();
+  }
+
+  function findNormalizedMatch(text, normalizedQuery) {
+    if (!text) return null;
+    const cleanQuery = normalizeForLooseMatch(normalizedQuery);
+    if (!cleanQuery) return null;
+
+    const indexMap = [];
+    const chars = [];
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (/[\s\u200B\u200C\uFEFF\u00A0]/.test(char)) continue;
+      indexMap.push(i);
+      chars.push(char);
+    }
+
+    if (chars.length === 0) return null;
+    const normalizedText = chars.join("");
+    const idx = normalizedText.toLowerCase().indexOf(cleanQuery.toLowerCase());
+    if (idx === -1) return null;
+
+    const start = indexMap[idx];
+    const endIndex = idx + cleanQuery.length - 1;
+    const end = indexMap[endIndex] !== undefined ? indexMap[endIndex] + 1 : text.length;
+
+    return { start, end };
+  }
+
+  function wrapRangeWithMark(range, className, query, severity) {
+    if (!range) return null;
+    const mark = document.createElement("mark");
+    mark.className = className;
+    mark.dataset.dpdText = query;
+    if (severity) mark.dataset.dpdSeverity = severity;
+
+    const fragment = range.extractContents();
+    mark.appendChild(fragment);
+    range.insertNode(mark);
+    return mark;
+  }
+
+  function wrapRange(textNode, start, end, className, query, severity) {
+    const text = textNode.nodeValue || "";
+    const parent = textNode.parentNode;
+    if (!parent) return { mark: null, tail: null };
+
+    const before = text.slice(0, start);
+    const target = text.slice(start, end);
+    const after = text.slice(end);
+
+    const fragment = document.createDocumentFragment();
+    if (before) fragment.appendChild(document.createTextNode(before));
+
+    const mark = document.createElement("mark");
+    mark.className = className;
+    mark.dataset.dpdText = query;
+    if (severity) mark.dataset.dpdSeverity = severity;
+    mark.textContent = target;
+    fragment.appendChild(mark);
+
+    let tail = null;
+    if (after) {
+      tail = document.createTextNode(after);
+      fragment.appendChild(tail);
+    }
+
+    parent.replaceChild(fragment, textNode);
+    return { mark, tail };
+  }
+
+  function markMatchesInNode(textNode, query, severity) {
+    const regex = buildLooseRegex(query);
+    if (!regex) return [];
+    const className = CLASS_BY_SEVERITY[severity] || CLASS_BY_SEVERITY.default;
+
+    const marks = [];
     let node = textNode;
-    let firstMark = null;
 
     while (node && node.nodeType === Node.TEXT_NODE) {
       const value = node.nodeValue || "";
-      const lower = value.toLowerCase();
-      const idx = lower.indexOf(queryLower);
-      if (idx === -1) break;
+      const match = regex.exec(value);
+      if (!match) break;
 
       const range = document.createRange();
-      range.setStart(node, idx);
-      range.setEnd(node, idx + queryLower.length);
+      range.setStart(node, match.index);
+      range.setEnd(node, match.index + match[0].length);
 
       const mark = document.createElement("mark");
-      mark.className = HIGHLIGHT_CLASS;
-      if (severity) {
-        mark.dataset.severity = severity;
-      }
+      mark.className = className;
+      mark.dataset.dpdText = query;
+      if (severity) mark.dataset.dpdSeverity = severity;
 
       range.surroundContents(mark);
-      if (!firstMark) firstMark = mark;
+      marks.push(mark);
 
-      const nextNode = mark.nextSibling;
-      if (!nextNode || nextNode.nodeType !== Node.TEXT_NODE) break;
-      node = nextNode;
+      const next = mark.nextSibling;
+      if (!next || next.nodeType !== Node.TEXT_NODE) break;
+      node = next;
     }
 
-    return firstMark;
+    return marks;
   }
 
-  function highlightText(query, { severity = "", scroll = false, clear = true } = {}) {
+  function highlightAcrossNodes(nodes, query, severity) {
+    if (!nodes?.length) return [];
+    const className = CLASS_BY_SEVERITY[severity] || CLASS_BY_SEVERITY.default;
+    const normalizedQuery = normalizeForLooseMatch(query);
+    if (!normalizedQuery) return [];
+
+    const indexMap = [];
+    const normalizedChars = [];
+
+    for (const node of nodes) {
+      if (!node?.nodeValue) continue;
+      const value = node.nodeValue;
+      for (let i = 0; i < value.length; i++) {
+        const ch = value[i];
+        if (/[\s\u200B\u200C\uFEFF\u00A0]/.test(ch)) continue;
+        if (!/\S/.test(ch) && /\S/.test(normalizedQuery[0] || "")) continue;
+        normalizedChars.push(normalizeChar(ch));
+        indexMap.push({ node, offset: i });
+      }
+      // 노드 사이 구분자를 넣어 허용
+      normalizedChars.push(" ");
+      indexMap.push(null);
+    }
+
+    const aggregate = normalizedChars.join("");
+    const target = normalizeForLooseMatch(query).toLowerCase();
+    if (!aggregate || !target) return [];
+
+    const idx = aggregate.indexOf(target);
+    if (idx === -1) return [];
+
+    let startInfo = null;
+    let endInfo = null;
+    let consumed = 0;
+
+    for (let i = idx; i < aggregate.length; i++) {
+      const mapEntry = indexMap[i];
+      if (!mapEntry) continue;
+      if (!startInfo) startInfo = mapEntry;
+      consumed += 1;
+      if (consumed >= target.length) {
+        endInfo = mapEntry;
+        break;
+      }
+    }
+
+    if (!startInfo || !endInfo) return [];
+
+    const range = document.createRange();
+    range.setStart(startInfo.node, startInfo.offset);
+    range.setEnd(endInfo.node, endInfo.offset + 1);
+    const mark = wrapRangeWithMark(range, className, query, severity);
+    return mark ? [mark] : [];
+  }
+
+  function splitByPunctuation(text) {
+    const result = [];
+    if (!text) return result;
+    let buffer = "";
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      buffer += ch;
+      if (/[.!?]/.test(ch)) {
+        const segment = buffer.trim();
+        if (segment) result.push(segment);
+        buffer = "";
+      }
+    }
+    const tail = buffer.trim();
+    if (tail) result.push(tail);
+    return result;
+  }
+
+  function splitIntoWords(text) {
+    return String(text || "")
+      .split(/\s+/)
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0);
+  }
+
+  function highlightText(query, { severity = "", scroll = false, clear = true, log = true } = {}, internal = {}) {
     if (!query || typeof query !== "string") return false;
-    const clean = query.trim();
-    if (!clean) return false;
+    const target = query.trim();
+    if (!target) return false;
+    const { disableSegments = false } = internal;
 
     ensureStyle();
     if (clear) clearHighlights(document);
 
-    const queryLower = clean.toLowerCase();
     const nodes = getTextNodes(document);
-    let firstMark = null;
+    let first = null;
 
     for (const node of nodes) {
-      const mark = highlightInTextNode(node, queryLower, severity);
-      if (mark && !firstMark) firstMark = mark;
+      const marks = markMatchesInNode(node, target, severity);
+      if (marks.length > 0) {
+        if (!first) first = marks[0];
+        if (log) {
+          marks.forEach((mark, idx) => {
+            const rect = mark.getBoundingClientRect();
+            console.log(
+              "[DPD][Highlight] 위치보기 매치",
+              {
+                index: idx,
+                text: target,
+                severity,
+                rect: {
+                  top: rect.top,
+                  left: rect.left,
+                  width: rect.width,
+                  height: rect.height,
+                  bottom: rect.bottom,
+                  right: rect.right,
+                },
+                domPath: getDomPath(mark.parentElement || mark),
+              }
+            );
+            console.log("[DPD][Highlight] 위치보기 요소 HTML", {
+              index: idx,
+              snippet: getHtmlSnippet(mark.parentElement || mark),
+            });
+          });
+        }
+      }
     }
 
-    if (scroll && firstMark) {
+    if (scroll && first) {
       try {
-        firstMark.scrollIntoView({ block: "center", behavior: "smooth" });
-        firstMark.classList.add("blink");
-        setTimeout(() => firstMark?.classList?.remove("blink"), 1200);
-      } catch (_) {}
+        first.scrollIntoView({ block: "center", behavior: "smooth" });
+        first.classList.add("blink");
+        setTimeout(() => first?.classList?.remove("blink"), 1200);
+      } catch {
+        /* noop */
+      }
       return true;
     }
 
-    return Boolean(firstMark);
+    const found = Boolean(first);
+    if (!found && log) {
+      const crossMarks = highlightAcrossNodes(nodes, target, severity);
+      if (crossMarks.length > 0) {
+        const mark = crossMarks[0];
+        if (scroll) {
+          try {
+            mark.scrollIntoView({ block: "center", behavior: "smooth" });
+            mark.classList.add("blink");
+            setTimeout(() => mark?.classList?.remove("blink"), 1200);
+          } catch {
+            /* noop */
+          }
+        }
+        if (log) {
+          crossMarks.forEach((m, idx) => {
+            const rect = m.getBoundingClientRect();
+            console.log("[DPD][Highlight] 위치보기 매치(분할)", {
+              index: idx,
+              text: target,
+              severity,
+              rect: {
+                top: rect.top,
+                left: rect.left,
+                width: rect.width,
+                height: rect.height,
+                bottom: rect.bottom,
+                right: rect.right,
+              },
+              domPath: getDomPath(m.parentElement || m),
+            });
+            console.log("[DPD][Highlight] 위치보기 요소 HTML", {
+              index: idx,
+              snippet: getHtmlSnippet(m.parentElement || m),
+            });
+          });
+        }
+        return true;
+      }
+      if (!disableSegments) {
+        const sentenceSegments = splitByPunctuation(target).filter((seg) => seg.length >= 2);
+        if (sentenceSegments.length > 1) {
+          let success = false;
+          sentenceSegments.forEach((seg, idx) => {
+            const segFound = highlightText(
+              seg,
+              {
+                severity,
+                scroll: scroll && !success,
+                clear: idx === 0 ? clear : false,
+                log,
+              },
+              { disableSegments: true }
+            );
+            if (segFound) success = true;
+          });
+          if (success) return true;
+        }
+        const wordSegments = splitIntoWords(target).filter((seg) => seg.length >= 1);
+        if (wordSegments.length > 1) {
+          let success = false;
+          wordSegments.forEach((seg, idx) => {
+            const segFound = highlightText(
+              seg,
+              {
+                severity,
+                scroll: scroll && !success,
+                clear: idx === 0 ? clear : false,
+                log,
+              },
+              { disableSegments: true }
+            );
+            if (segFound) success = true;
+          });
+          if (success) return true;
+        }
+      }
+      console.log("[DPD][Highlight] 위치보기 매치 실패", { text: target, severity });
+    }
+    return found;
   }
 
   function highlightBulk(items) {
@@ -130,12 +485,12 @@
         const text = String(it?.text || "").trim();
         if (!text) continue;
         const severity = String(it?.severity || "");
-        if (highlightText(text, { severity, scroll: false, clear: false })) {
+        if (highlightText(text, { severity, scroll: false, clear: false, log: false })) {
           count++;
         }
       }
       return count;
-    } catch (err) {
+    } catch {
       return 0;
     }
   }
@@ -143,6 +498,7 @@
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg?.type === "bulk-highlight") {
       const items = Array.isArray(msg.items) ? msg.items : [];
+      console.log("[DPD][Highlight] bulk-highlight 수신", { count: items.length });
       const count = highlightBulk(items);
       sendResponse?.({ ok: true, count });
       return;
@@ -151,7 +507,12 @@
       const payload = msg.payload || {};
       const text = String(payload.text || "");
       const severity = String(payload.severity || "");
-      const ok = highlightText(text, { severity, scroll: true, clear: true });
+       console.log("[DPD][Highlight] highlight-in-page 수신", {
+         textSample: text.slice(0, 120),
+         severity,
+         length: text.length,
+       });
+      const ok = highlightText(text, { severity, scroll: true, clear: true, log: true });
       sendResponse?.({ ok });
       return;
     }

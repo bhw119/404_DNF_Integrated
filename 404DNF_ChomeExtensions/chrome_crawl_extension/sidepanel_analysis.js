@@ -11,7 +11,8 @@
 const API_BASE = "http://localhost:8000";
 
 const qs = new URLSearchParams(location.search);
-const docId = qs.get("doc");
+const docIdParam = qs.get("doc");
+let currentDocId = docIdParam || null;
 
 const SUMMARY_HTML = "sidepanel_summary.html";
 const LAW_HTML = "sidepanel_law.html";
@@ -51,6 +52,42 @@ const state = {
   filter: /** 'all' | 'high' | 'mid' | 'low' */ ('all'),
   modelProgress: /** @type {{status: string, current: number, total: number} | null} */ (null),
 };
+
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+async function fetchDocById(id) {
+  if (!id) return null;
+  try {
+    const res = await fetch(`${API_BASE}/doc/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    const payload = await res.json();
+    return payload?.doc || null;
+  } catch (err) {
+    console.warn("[DPD][Sidepanel] fetchDocById 실패", err);
+    return null;
+  }
+}
+
+async function fetchLatestDocForActiveTab() {
+  try {
+    const tab = await getActiveTab();
+    const tabUrl = tab?.url;
+    if (!tabUrl) {
+      console.warn("[DPD][Sidepanel] 활성 탭 URL을 확인할 수 없습니다.");
+      return null;
+    }
+    const res = await fetch(`${API_BASE}/latest?tabUrl=${encodeURIComponent(tabUrl)}`);
+    if (!res.ok) return null;
+    const payload = await res.json();
+    return payload?.doc || null;
+  } catch (err) {
+    console.warn("[DPD][Sidepanel] fetchLatestDocForActiveTab 실패", err);
+    return null;
+  }
+}
 
 /** @typedef {{
  *   text: string,
@@ -96,9 +133,38 @@ async function broadcastHighlights() {
       })
       .filter(Boolean);
 
+    if (payload.length === 0) {
+      return;
+    }
+
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) {
-      await chrome.tabs.sendMessage(tab.id, { type: "bulk-highlight", items: payload });
+    if (!tab?.id) {
+      console.warn("[DPD][Sidepanel] 하이라이트 전송 실패: 활성 탭 없음");
+      return;
+    }
+
+    const message = { type: "bulk-highlight", items: payload };
+
+    try {
+      await chrome.tabs.sendMessage(tab.id, message);
+      console.log("[DPD][Sidepanel] bulk-highlight 전송 완료", { count: payload.length });
+    } catch (err) {
+      const msg = String(err?.message || err || "");
+      console.warn("[DPD][Sidepanel] bulk-highlight 전송 실패, 재주입 시도", msg);
+      if (msg.includes("Receiving end does not exist")) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: tab.id, allFrames: true },
+            files: ["content_highlight.js"],
+          });
+          await chrome.tabs.sendMessage(tab.id, message);
+          console.log("[DPD][Sidepanel] bulk-highlight 재전송 성공");
+        } catch (injectErr) {
+          console.warn("[DPD][Sidepanel] bulk-highlight 재전송 실패", injectErr);
+        }
+      } else {
+        console.warn("[DPD][Sidepanel] bulk-highlight 전송 에러", err);
+      }
     }
   } catch (e) {
     console.warn("페이지 하이라이트 동기화 실패:", e);
@@ -166,20 +232,40 @@ async function fetchDocForAnalysis() {
   try {
     setStatus("서버에서 데이터를 불러오는 중…");
 
-    let url;
-    if (docId) {
-      url = `${API_BASE}/doc/${encodeURIComponent(docId)}`;
-    } else {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tabUrl = encodeURIComponent(tab?.url || "");
-      url = `${API_BASE}/latest?tabUrl=${tabUrl}`;
+    let doc = null;
+    if (currentDocId) {
+      doc = await fetchDocById(currentDocId);
+      if (!doc) {
+        console.warn(`[DPD][Sidepanel] 지정된 문서(${currentDocId})를 찾지 못했습니다. 최신 문서를 사용합니다.`);
+      }
     }
 
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`API ${res.status}`);
-    const payload = await res.json();
+    if (!doc) {
+      doc = await fetchLatestDocForActiveTab();
+      if (!doc) {
+        setStatus("문서를 찾지 못했습니다. 수집을 먼저 실행해 주세요.");
+        state.items = [];
+        renderCounts();
+        renderList();
+        await broadcastHighlights();
+        return;
+      }
+    }
 
-    const d = payload?.doc || payload;
+    if (doc?._id) {
+      currentDocId = typeof doc._id === "string" ? doc._id : String(doc._id);
+    } else {
+      currentDocId = null;
+    }
+
+    if (el.tabSummary) {
+      el.tabSummary.href = buildHref(SUMMARY_HTML);
+    }
+    if (el.tabLaw) {
+      el.tabLaw.href = buildHref(LAW_HTML);
+    }
+
+    const d = doc;
 
     // 모델링 진행 상황 확인
     let modelingStatus = d?.modelingStatus || 'pending';
@@ -197,9 +283,11 @@ async function fetchDocForAnalysis() {
     // 모델 결과를 /model API에서 가져오기
     let modelResults = [];
     try {
-      const modelRes = await fetch(`${API_BASE}/model?id=${encodeURIComponent(d._id)}`);
+      if (currentDocId) {
+        const modelRes = await fetch(`${API_BASE}/model?id=${encodeURIComponent(currentDocId)}`);
       if (modelRes.ok) {
         modelResults = await modelRes.json();
+      }
       }
     } catch (e) {
       console.warn('모델 결과 조회 실패:', e);
@@ -256,6 +344,7 @@ async function fetchDocForAnalysis() {
     renderList();
     await broadcastHighlights();
     setStatus("불러오기 완료");
+    return { doc: d, modelingStatus };
   } catch (e) {
     console.error(e);
     setStatus(`불러오기 실패: ${e?.message || e}`);
@@ -264,6 +353,7 @@ async function fetchDocForAnalysis() {
     renderCounts();
     renderList();
     await broadcastHighlights();
+    return null;
   }
 }
 
@@ -378,6 +468,11 @@ function renderList() {
     card.querySelector(".pill-locate")?.addEventListener("click", async () => {
       try {
         const { severity } = toPercentAndSeverity(it);
+        console.log("[DPD][Sidepanel] 위치보기 클릭", {
+          severity,
+          textSample: (it.rawText || it.text || "").slice(0, 120),
+          hasRawText: Boolean(it.rawText),
+        });
         const msg = {
           type: "highlight-in-page",
           payload: {
@@ -385,11 +480,24 @@ function renderList() {
             severity,
             range: it.range,
             frameIndex: it.frameIndex,
-            docId,
+            docId: currentDocId,
           }
         };
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-        if (tab?.id) await chrome.tabs.sendMessage(tab.id, msg);
+        if (!tab?.id) {
+          console.warn("[DPD][Sidepanel] 활성 탭을 찾지 못했습니다.");
+          return;
+        }
+        console.log("[DPD][Sidepanel] 위치보기 메시지 전송", { tabId: tab.id, payloadLength: (msg.payload.text || "").length });
+        const response = await chrome.tabs.sendMessage(tab.id, msg).catch((err) => {
+          console.warn("[DPD][Sidepanel] 위치보기 전송 실패", err);
+          return null;
+        });
+        if (response) {
+          console.log("[DPD][Sidepanel] 위치보기 응답", response);
+        } else {
+          console.log("[DPD][Sidepanel] 위치보기 응답 없음 또는 실패");
+        }
       } catch (e) {
         console.warn("위치보기 전송 실패", e);
       }
@@ -415,10 +523,14 @@ el.chipMid?.addEventListener("click", () => setFilter("mid"));
 el.chipLow?.addEventListener("click", () => setFilter("low"));
 
 /** --------- 헤더 아이콘 ---------- */
-el.actionRefresh?.addEventListener("click", () => {
-  fetchDocForAnalysis();
-  if (docId) {
-    checkModelProgress();
+el.actionRefresh?.addEventListener("click", async () => {
+  const result = await fetchDocForAnalysis();
+  const status = result?.modelingStatus || "pending";
+  if (status === "processing" || status === "pending") {
+    if (!progressInterval) {
+      progressInterval = setInterval(checkModelProgress, 1000);
+    }
+    await checkModelProgress();
   }
 });
 el.actionClose?.addEventListener("click", () => {
@@ -433,7 +545,7 @@ el.actionClose?.addEventListener("click", () => {
 /** --------- 탭 이동(파일 분리) ---------- */
 function buildHref(base) {
   const u = new URL(base, location.href);
-  if (docId) u.searchParams.set("doc", docId);
+  if (currentDocId) u.searchParams.set("doc", currentDocId);
   return u.toString();
 }
 if (el.tabSummary) {
@@ -541,10 +653,10 @@ async function showModelProgress(progress) {
 }
 
 async function checkModelProgress() {
-  if (!docId) return;
+  if (!currentDocId) return;
   
   try {
-    const res = await fetch(`${API_BASE}/model/progress/${encodeURIComponent(docId)}`);
+    const res = await fetch(`${API_BASE}/model/progress/${encodeURIComponent(currentDocId)}`);
     if (!res.ok) return;
     
     const data = await res.json();
@@ -565,44 +677,23 @@ async function checkModelProgress() {
 }
 
 /** --------- 시작 ---------- */
-// 문서 ID가 있으면 진행 상황 확인 시작
-if (docId) {
-  // 초기 상태: 빈 배열로 시작 (버그 방지)
+async function init() {
   state.items = [];
   renderCounts();
   renderList();
   broadcastHighlights().catch(() => {});
-  
-  // 즉시 한 번 확인
-  checkModelProgress();
-  // 1초마다 진행 상황 확인
-  progressInterval = setInterval(checkModelProgress, 1000);
-  
-  // 진행 상황 확인 후 모델링 상태에 따라 데이터 로드
-  // 모델링이 완료된 경우에만 데이터 로드
-  setTimeout(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/model/progress/${encodeURIComponent(docId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.ok && data.progress) {
-          // 모델링이 완료되었거나 실패한 경우에만 데이터 로드
-          if (data.progress.status === 'completed' || data.progress.status === 'failed') {
-            fetchDocForAnalysis();
-          }
-          // processing이나 pending 상태일 때는 아무것도 로드하지 않음
-        } else {
-          // 진행 상황 정보가 없으면 모델링 완료 여부 확인 후 로드
-          // 모델링이 완료되지 않았을 수 있으므로 로드하지 않음
-        }
-      }
-      // res.ok가 false인 경우도 로드하지 않음 (버그 방지)
-    } catch (e) {
-      // 진행 상황 확인 실패 시에도 로드하지 않음 (버그 방지)
-      console.warn('진행 상황 확인 실패, 데이터 로드 건너뜀:', e);
+
+  const result = await fetchDocForAnalysis();
+  const status = result?.modelingStatus || "pending";
+
+  if (status === "processing" || status === "pending") {
+    if (!progressInterval) {
+      progressInterval = setInterval(checkModelProgress, 1000);
     }
-  }, 500);
-} else {
-  // 문서 ID가 없으면 바로 데이터 로드
-  fetchDocForAnalysis();
+    await checkModelProgress();
+  }
 }
+
+init().catch((err) => {
+  console.warn("[DPD][Sidepanel] 초기화 실패", err);
+});

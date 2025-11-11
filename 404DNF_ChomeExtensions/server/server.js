@@ -174,6 +174,20 @@ app.get('/latest', async (req, res) => {
   }
 });
 
+// 최신 문서 (전체에서 가장 최근)
+app.get('/doc/latest', async (_req, res) => {
+  try {
+    const doc = await ExtensionDoc.findOne().sort({ createdAt: -1 }).lean().exec();
+    if (!doc) return res.status(404).json({ ok: false, error: 'not found' });
+
+    doc._id = doc._id.toString();
+    res.json({ ok: true, doc });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ ok: false, error: 'server error' });
+  }
+});
+
 // ID로 단건 조회
 app.get('/doc/:id', async (req, res) => {
   try {

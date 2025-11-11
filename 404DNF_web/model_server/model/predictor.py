@@ -11,6 +11,7 @@ import json
 import os
 import sys
 import pandas as pd
+import re
 from model.resgcn import ResGCN
 
 # stdout 버퍼링 비활성화 (로그 즉시 출력)
@@ -182,6 +183,35 @@ def get_type_from_predicate(predicate):
         if key.lower() == predicate_lower:
             return value
     return None
+
+# 텍스트 블록 파싱 유틸리티
+def parse_text_blocks(raw_text):
+    """
+    '#'(블록) 및 '*'(단어) 구분자를 사용하는 문자열을 자연어 문장 리스트로 변환
+    기존 포맷(*만 사용)도 자동으로 처리
+    """
+    if raw_text is None:
+        return []
+
+    if isinstance(raw_text, list):
+        candidates = raw_text
+    else:
+        text = str(raw_text)
+        if "#" in text:
+            candidates = [seg.strip() for seg in text.split("#") if seg.strip()]
+        else:
+            candidates = [seg.strip() for seg in text.split("*") if seg.strip()]
+
+    cleaned = []
+    for segment in candidates:
+        if segment is None:
+            continue
+        segment_str = str(segment)
+        segment_str = segment_str.replace("*", " ")
+        segment_str = re.sub(r"\s+", " ", segment_str).strip()
+        if segment_str:
+            cleaned.append(segment_str)
+    return cleaned
 
 # kNN 그래프 구성 함수 (노트북 구조)
 def knn_indices(emb, k=10, metric="cosine"):
@@ -364,10 +394,11 @@ def process_image_and_predict(image_path):
 # 텍스트 기반 예측 함수 (* 기준으로 분리)
 def process_text_and_predict(full_text, progress_callback=None):
     """
-    fullText를 * 기준으로 분리하여 각 텍스트에 대해 모델 예측 수행
+    fullText를 블록 단위로 분리하여 각 텍스트에 대해 모델 예측 수행
+    (신규 포맷: '#' 구분, 기존 포맷: '*' 구분)
     
     Args:
-        full_text: *로 구분된 텍스트 문자열
+        full_text: 수집된 텍스트 (문자열 또는 문자열 리스트)
         
     Returns:
         각 텍스트별 예측 결과 리스트
@@ -380,9 +411,9 @@ def process_text_and_predict(full_text, progress_callback=None):
     else:
         reduced_law = pd.DataFrame(columns=['predicate', 'type', 'laws'])
     
-    # * 기준으로 텍스트 분리 (fullText는 이미 번역된 영어 텍스트)
-    text_list = [text.strip() for text in full_text.split("*") if text.strip()]
-    print(f"📊 [텍스트 분리] * 기준으로 {len(text_list)}개 텍스트 발견 (번역된 영어 텍스트)")
+    # 텍스트 블록 파싱
+    text_list = parse_text_blocks(full_text)
+    print(f"📊 [텍스트 분리] 총 {len(text_list)}개 블록 처리 예정")
     output = []
     
     for idx, text in enumerate(text_list, 1):

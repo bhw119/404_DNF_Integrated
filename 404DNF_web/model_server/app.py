@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from datetime import datetime
-from model.predictor import process_image_and_predict, process_text_and_predict
+from model.predictor import process_image_and_predict, process_text_and_predict, parse_text_blocks
 
 # stdout 버퍼링 비활성화 (로그 즉시 출력)
 sys.stdout.reconfigure(line_buffering=True)
@@ -197,9 +197,9 @@ def watch_extension_collection():
                         print(f"📝 텍스트 길이: {len(full_text)} 문자")
                         sys.stdout.flush()
                         
-                        # * 기준으로 문장 수 계산
-                        sentences = [s.strip() for s in full_text.split("*") if s.strip()]
-                        print(f"📋 문장 수 (* 기준): {len(sentences)}개")
+                        # 블록 기준 문장 수 계산
+                        sentences = parse_text_blocks(full_text)
+                        print(f"📋 문장 수 (# 기준 블록): {len(sentences)}개")
                         print(f"📄 텍스트 미리보기: {full_text[:150]}")
                         print("=" * 80)
                         sys.stdout.flush()
@@ -235,9 +235,9 @@ def watch_extension_collection():
                             print(f"\n🔄 [모델링 시작] {total_count}개 문장 처리 예정\n")
                             sys.stdout.flush()
                             
-                            # originalText를 * 기준으로 분리 (원본 텍스트 매핑용)
-                            original_sentences = [s.strip() for s in original_text.split("*") if s.strip()]
-                            translated_sentences = [s.strip() for s in full_text.split("*") if s.strip()]
+                            # originalText/translatedText 블록 파싱
+                            original_sentences = parse_text_blocks(original_text)
+                            translated_sentences = sentences
                             
                             # 원본과 번역된 문장 수가 같은지 확인
                             if len(original_sentences) != len(translated_sentences):

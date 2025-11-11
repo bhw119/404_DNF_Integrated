@@ -14,6 +14,7 @@ const API_BASE = "http://localhost:8000";
 // ?doc=... 지원: 명시되면 해당 문서, 아니면 현재 탭 URL 기준 최신 문서
 const qs = new URLSearchParams(location.search);
 const docIdFromQS = qs.get("doc");
+let currentDocId = docIdFromQS || null;
 
 // 요소 캐시
 const el = {
@@ -59,6 +60,31 @@ const el = {
 
 // 접근성용 상태 텍스트
 function setStatus(t) { if (el.status) el.status.textContent = t; }
+
+async function fetchDocById(id) {
+  if (!id) return null;
+  try {
+    const res = await fetch(`${API_BASE}/doc/${encodeURIComponent(id)}?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const payload = await res.json();
+    return payload?.doc || null;
+  } catch (err) {
+    console.warn("[DPD][Summary] fetchDocById 실패", err);
+    return null;
+  }
+}
+
+async function fetchLatestDoc() {
+  try {
+    const res = await fetch(`${API_BASE}/doc/latest?t=${Date.now()}`, { cache: "no-store" });
+    if (!res.ok) return null;
+    const payload = await res.json();
+    return payload?.doc || null;
+  } catch (err) {
+    console.warn("[DPD][Summary] fetchLatestDoc 실패", err);
+    return null;
+  }
+}
 
 // 위험도 라벨(텍스트) 매핑
 function riskLabel(percent) {
@@ -278,23 +304,25 @@ async function fetchDoc({ bustCache = false } = {}) {
   try {
     setStatus("서버에서 데이터를 불러오는 중…");
 
-    // 요청 URL 결정
-    let url;
-    if (docIdFromQS) {
-      url = `${API_BASE}/doc/${encodeURIComponent(docIdFromQS)}`;
-    } else {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tabUrl = encodeURIComponent(tab?.url || "");
-      url = `${API_BASE}/latest?tabUrl=${tabUrl}`;
+    let doc = null;
+    if (currentDocId) {
+      doc = await fetchDocById(currentDocId);
+      if (!doc) {
+        console.warn(`[DPD][Summary] 지정된 문서(${currentDocId})를 찾지 못했습니다. 최신 문서를 사용합니다.`);
+      }
     }
-    if (bustCache) url += (url.includes("?") ? "&" : "?") + `t=${Date.now()}`;
 
-    // 문서 조회
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) throw new Error(`API ${res.status}`);
-    const payload = await res.json();
-    const d = payload?.doc || payload;
-    if (!d || !d._id) { setStatus("문서를 찾지 못했습니다."); return; }
+    if (!doc) {
+      doc = await fetchLatestDoc();
+      if (!doc) {
+        setStatus("문서를 찾지 못했습니다. 먼저 수집을 실행해주세요.");
+        bindTop3([]);
+        return;
+      }
+    }
+
+    currentDocId = typeof doc._id === "string" ? doc._id : String(doc._id);
+    const d = doc;
 
     // 메타/요약 바인딩
     if (el.docId) el.docId.textContent = d._id;
@@ -372,7 +400,7 @@ el.actionClose?.addEventListener("click", () => {
 /* ──[7] 탭 내비게이션 ─────────────────────────────────────────────────── */
 function buildHref(base) {
   const u = new URL(base, location.href);
-  if (docIdFromQS) u.searchParams.set("doc", docIdFromQS);
+  if (currentDocId) u.searchParams.set("doc", currentDocId);
   return u.toString();
 }
 document.getElementById("tabAnalysis")?.addEventListener("click", (ev) => {

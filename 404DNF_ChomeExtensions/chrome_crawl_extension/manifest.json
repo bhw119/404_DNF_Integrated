@@ -3,7 +3,7 @@
   "name": "404 DNF",
   "version": "1.3.0",
   "description": "다크패턴 탐지 졸업 프로젝트 크롬 확장 프로그램",
-  "permissions": ["activeTab", "scripting", "downloads", "clipboardWrite", "sidePanel"],
+  "permissions": ["activeTab", "tabs", "scripting", "downloads", "clipboardWrite", "sidePanel"],
   "host_permissions": [
     "<all_urls>",
     "http://localhost:8000/*",
