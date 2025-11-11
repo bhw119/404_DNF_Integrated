@@ -280,7 +280,7 @@ async function fetchDocForAnalysis() {
 
     // 모델 결과를 /model API에서 가져오기
     let modelResults = [];
-    const allowResultFetch = currentDocId && (modelingStatus === 'completed' || (modelingStatus === 'processing' && progressPercent === 100));
+    const allowResultFetch = currentDocId && modelingStatus === 'completed';
     if (allowResultFetch) {
       try {
         const modelRes = await fetch(`${API_BASE}/model?id=${encodeURIComponent(currentDocId)}`);
@@ -659,13 +659,6 @@ async function showModelProgress(progress) {
     renderCounts();
     renderList();
     await broadcastHighlights();
-    if (transferPending) {
-      try {
-        await fetchDocForAnalysis();
-      } catch (err) {
-        console.warn("전송 대기 중 결과 갱신 실패:", err);
-      }
-    }
   } else if (status === 'completed') {
     state.transferPending = false;
     // 상태 초기화
