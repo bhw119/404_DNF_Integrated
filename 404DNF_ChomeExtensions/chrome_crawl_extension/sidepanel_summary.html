@@ -148,39 +148,29 @@
     .primary .rank-sub { color:var(--rank-text-light); }
     .rank-right { font-weight:900; font-size:22px; display:flex; gap:4px; align-items:baseline; }
     .rank-badge {
-      position:absolute;
-      right:10px;
-      top:-14px;
-      display:grid;
-      place-items:center;
-    }
-    .rank-badge.medal {
-      width: 34px;
-      height: 34px;
-      border-radius: 50%;
-      background: radial-gradient(circle at 30% 30%, #FFD84D, #F4C84B 80%);
-      border: 2px solid #F1B700;
-      color: #b45309;
-      font-weight: 900;
-      font-size: 13px;
-      box-shadow:
-        0 0 0 3px #FFF,
-        0 2px 6px rgba(0, 0, 0, 0.25);
-      position: relative;
-      z-index: 2;
-    }
-    .rank-badge.medal::before,
-    .rank-badge.medal::after {
-      content: "";
       position: absolute;
-      width: 6px;
-      height: 14px;
-      background: linear-gradient(to bottom, #facc15, #fbbf24);
-      top: -10px;
-      border-radius: 1px;
+      left: -4px;      
+      top: -7px;      
+      right: auto;      
+      width: 48px;
+      height: 48px;
+      display: grid;
+      place-items: center;
+      z-index: 5;
     }
-    .rank-badge.medal::before { left: 8px; transform: rotate(15deg); }
-    .rank-badge.medal::after { right: 8px; transform: rotate(-15deg); }
+
+    /* 메달 이미지 */
+    .rank-badge img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    /* 텍스트와 겹치지 않게 왼쪽 여백 확보 */
+    .rank-card.primary {
+      padding-left: 60px;
+    }
     .rank-card.secondary { background:var(--rank-silver); }
 
     /* ===== 링크 카드===== */
@@ -321,7 +311,9 @@
       <div class="rank-wrap">
         <!-- 1위 -->
         <div class="rank-card primary" id="rank1Card">
-          <div class="rank-badge medal">1</div>
+          <div class="rank-badge medal">
+            <img src="medal.png" alt="1위 메달" style="width: 34px; height: 34px;">
+          </div>
           <div class="rank-left">
             <div class="rank-title" id="top1Name">-</div>
             <div class="rank-sub" id="top1Desc">-</div>
