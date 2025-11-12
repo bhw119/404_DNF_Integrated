@@ -146,17 +146,20 @@
     .rank-title { font-weight:800; font-size:18px; }
     .rank-sub { font-size:12px; opacity:.9; }
     .primary .rank-sub { color:var(--rank-text-light); }
-    .rank-right { font-weight:900; font-size:22px; display:flex; gap:4px; align-items:baseline; }
-    .rank-badge {
+    .rank-right { font-weight:900; font-size:22px; display:flex; gap:4px; align-items:flex-end; position: relative; }
+
+    /* 숫자 바로 위 중앙에 고정 */
+    .rank-right .medal-overcount{
       position: absolute;
-      left: -4px;      
-      top: -7px;      
-      right: auto;      
-      width: 48px;
-      height: 48px;
+      left: 50%;
+      top: -1.8em;              
+      transform: translateX(-50%);
+      width: 1.4em;             
+      height: 1.4em;
       display: grid;
       place-items: center;
-      z-index: 5;
+      pointer-events: none;
+      z-index: 10;
     }
 
     /* 메달 이미지 */
@@ -167,10 +170,6 @@
       display: block;
     }
 
-    /* 텍스트와 겹치지 않게 왼쪽 여백 확보 */
-    .rank-card.primary {
-      padding-left: 60px;
-    }
     .rank-card.secondary { background:var(--rank-silver); }
 
     /* ===== 링크 카드===== */
@@ -311,14 +310,18 @@
       <div class="rank-wrap">
         <!-- 1위 -->
         <div class="rank-card primary" id="rank1Card">
-          <div class="rank-badge medal">
-            <img src="medal.png" alt="1위 메달" style="width: 34px; height: 34px;">
-          </div>
           <div class="rank-left">
+            <div class="rank-sub">TOP1</div>
             <div class="rank-title" id="top1Name">-</div>
             <div class="rank-sub" id="top1Desc">-</div>
           </div>
-          <div class="rank-right"><span id="top1Count">0</span><span>개</span></div>
+          <div class="rank-right">
+            <span id="top1Count">0</span><span>개</span>
+            <div class="rank-badge medal-overcount">
+              <img src="medal.png" alt="1위 메달">
+            </div>
+          </div>
+
         </div>
         <!-- 2위 -->
         <div class="rank-card secondary" id="rank2Card">
