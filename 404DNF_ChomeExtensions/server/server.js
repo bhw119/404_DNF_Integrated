@@ -77,6 +77,7 @@ const ExtensionDocSchema = new mongoose.Schema(
     frameMetadata: { type: [FrameMetaSchema], default: [] },
     structuredBlocks: { type: [StructuredBlockSchema], default: [] },
     clientId: { type: String },
+    processingServerId: { type: String },
     // 모델링 진행 상황 필드
     modelingStatus: { type: String, enum: ['pending', 'processing', 'completed', 'failed'], default: 'pending' },
     modelingProgress: { 

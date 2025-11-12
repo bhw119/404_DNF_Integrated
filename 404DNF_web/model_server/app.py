@@ -6,6 +6,8 @@ import re
 import sys
 import threading
 import time
+import socket
+import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 from model.predictor import process_image_and_predict, process_text_and_predict, parse_text_blocks
@@ -20,6 +22,14 @@ load_dotenv(os.path.join(BASE_DIR, '..', '.env'))  # 상위 디렉토리 .env
 load_dotenv(os.path.join(BASE_DIR, '..', 'server', '.env'))  # server/.env
 
 app = Flask(__name__)
+
+# 동시 실행 시 충돌 방지를 위한 서버 인스턴스 식별자
+SERVER_INSTANCE_ID = os.getenv("MODEL_SERVER_INSTANCE_ID")
+if not SERVER_INSTANCE_ID:
+    hostname = socket.gethostname()
+    pid = os.getpid()
+    SERVER_INSTANCE_ID = f"{hostname}-{pid}-{uuid.uuid4().hex[:6]}"
+print(f"🆔 [Model Server Instance] {SERVER_INSTANCE_ID}")
 
 # MongoDB 연결
 MONGODB_URL = os.getenv("MONGODB_URL") or os.getenv("MONGODB_URI")
@@ -163,6 +173,28 @@ def watch_extension_collection():
                         # 이미 처리된 문서는 스킵
                         if doc_id in processed_ids:
                             continue
+
+                    # 다른 인스턴스가 처리 중인지 확인
+                    existing_processor = doc.get("processingServerId")
+                    if existing_processor and existing_processor != SERVER_INSTANCE_ID:
+                        print(f"⚠️ [선점됨] 문서 {doc_id}는 다른 서버({existing_processor})가 처리 중입니다. 건너뜁니다.")
+                        processed_ids.add(doc_id)
+                        continue
+
+                    # 처리권 선점 (원자적 업데이트)
+                    if not existing_processor:
+                        claim_result = extension_col.update_one(
+                            {"_id": doc_id, "processingServerId": {"$exists": False}},
+                            {"$set": {"processingServerId": SERVER_INSTANCE_ID}}
+                        )
+                        if claim_result.modified_count == 0:
+                            claimed_doc = extension_col.find_one({"_id": doc_id}, {"processingServerId": 1})
+                            claimed_by = claimed_doc.get("processingServerId") if claimed_doc else None
+                            if claimed_by and claimed_by != SERVER_INSTANCE_ID:
+                                print(f"⚠️ [경쟁 감지] 문서 {doc_id}는 다른 서버({claimed_by})가 선점했습니다. 건너뜁니다.")
+                                processed_ids.add(doc_id)
+                                continue
+                        doc["processingServerId"] = SERVER_INSTANCE_ID
                         
                         # fullText(번역된 텍스트)와 originalText(원본 텍스트) 가져오기
                         full_text = doc.get("fullText")  # 번역된 영어 텍스트 (모델링용) - * 기준으로 구분됨
@@ -286,7 +318,9 @@ def watch_extension_collection():
                                         {"_id": doc_id},
                                         {"$set": {
                                             "modelingStatus": "processing",
-                                            "modelingProgress": {"current": current, "total": total}
+                                            "modelingProgress.current": current,
+                                            "modelingProgress.total": total_count,
+                                            "processingServerId": SERVER_INSTANCE_ID
                                         }}
                                     )
                                 except Exception as e:
@@ -296,7 +330,8 @@ def watch_extension_collection():
                                 {"_id": doc_id},
                                 {"$set": {
                                     "modelingStatus": "processing",
-                                    "modelingProgress": {"current": 0, "total": total_count}
+                                    "modelingProgress": {"current": 0, "total": total_count},
+                                    "processingServerId": SERVER_INSTANCE_ID
                                 }}
                             )
                             
@@ -402,8 +437,9 @@ def watch_extension_collection():
                                 {"_id": doc_id},
                                 {"$set": {
                                     "modelingStatus": "completed",
-                                    "modelingProgress": {"current": len(results), "total": len(results)},
-                                    "modelingCompletedAt": datetime.now()
+                                    "modelingProgress": {"current": len(results), "total": total_count},
+                                    "modelingCompletedAt": datetime.now(),
+                                    "processingServerId": SERVER_INSTANCE_ID
                                 }}
                             )
                             
@@ -424,7 +460,8 @@ def watch_extension_collection():
                                     {"_id": doc_id},
                                     {"$set": {
                                         "modelingStatus": "failed",
-                                        "modelingError": str(e)
+                                        "modelingError": str(e),
+                                        "processingServerId": SERVER_INSTANCE_ID
                                     }}
                                 )
                             except:
